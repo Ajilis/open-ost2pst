@@ -23,6 +23,7 @@ def _mailbox(*, subject: str = "Hello", attachment: bytes = b"abc") -> Mailbox:
                                 tzinfo=timezone.utc,
                             ),
                             is_read=False,
+                            body_rtf=b"{\\rtf1\\ansi Hello}",
                             attachments=[
                                 Attachment(
                                     filename="data.bin",
@@ -53,6 +54,8 @@ def test_manifest_contains_paths_dates_sizes_and_sha256() -> None:
     assert message.delivery_time == "2026-01-02T03:04:05.000000Z"
     assert message.creation_time == "2026-01-01T03:04:05.000000Z"
     assert message.is_read is False
+    assert message.rtf_size == len(b"{\\rtf1\\ansi Hello}")
+    assert len(message.rtf_sha256) == 64
 
     attachment = message.attachments[0]
     assert attachment.filename == "data.bin"
@@ -146,3 +149,22 @@ def test_manifest_escapes_folder_path_components() -> None:
         "/Root~1A",
         "/Root~1A/B~0C",
     ]
+
+
+def test_comparison_detects_rtf_hash_change() -> None:
+    source = _mailbox()
+    destination = _mailbox()
+    source.root.folders[0].messages[0].body_rtf = b"{\\rtf1\\ansi Source}"
+    destination.root.folders[0].messages[0].body_rtf = b"{\\rtf1\\ansi Destination}"
+
+    mismatches, count, truncated = compare_manifests(
+        build_manifest(source),
+        build_manifest(destination),
+    )
+
+    assert any(
+        item.kind == "message" and item.field == "rtf_sha256"
+        for item in mismatches
+    )
+    assert count == 2
+    assert truncated is False
