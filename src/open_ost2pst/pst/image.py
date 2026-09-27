@@ -10,6 +10,7 @@ from .blocks import DataBlockImage, DataBlockStore
 from .btree import BTreeResult, NbtEntry, build_bbt, build_nbt
 from .ndb import Root, UnicodeHeader, VALID_AMAP
 from .primitives import BlockBidAllocator, PageBidAllocator
+from .ltp.heap import HeapNode
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +93,34 @@ class NdbImageBuilder:
             raise ValueError(f"duplicate NID: {nid:#x}")
         self._nodes.append(entry)
         return entry
+
+    def add_heap_node(
+        self,
+        nid: int,
+        heap: HeapNode,
+        *,
+        parent_nid: int = 0,
+        sub_bid: int = 0,
+        c_ref: int = 1,
+    ) -> NbtEntry:
+        """Store a single-block HN as an NDB node.
+
+        Multi-block HNs require an XBLOCK/XXBLOCK data tree, which is a later
+        NDB milestone.
+        """
+
+        heap_image = heap.build()
+        if len(heap_image.blocks) != 1:
+            raise ValueError(
+                "multi-block HN requires XBLOCK/XXBLOCK support"
+            )
+        return self.add_data_node(
+            nid,
+            heap_image.blocks[0].data,
+            parent_nid=parent_nid,
+            sub_bid=sub_bid,
+            c_ref=c_ref,
+        )
 
     def add_data_node(
         self,
