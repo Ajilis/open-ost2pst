@@ -166,7 +166,7 @@ def _copy_message(
             else None
         ),
         delivery_filetime=delivery,
-        client_submit_filetime=created,
+        creation_filetime=created,
         is_read=True if source.is_read is None else source.is_read,
     )
 
