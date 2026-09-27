@@ -4,6 +4,7 @@ import pytest
 
 from open_ost2pst.pst.messaging import MessagingBuilder
 from open_ost2pst.pst.subnodes import SLBLOCK_MAX_ENTRIES
+from tests._libpff_helpers import get_child_by_name, get_ipm_subtree
 
 
 pypff = pytest.importorskip("pypff")
@@ -43,8 +44,8 @@ def test_libpff_resolves_attachments_through_siblock() -> None:
         store = pypff.file()
         store.open(handle.name)
         try:
-            root = store.get_root_folder()
-            inbox_item = root.get_sub_folder(0)
+            root = get_ipm_subtree(store)
+            inbox_item = get_child_by_name(root, "Inbox")
             item = inbox_item.get_sub_message(0)
 
             assert item.get_number_of_attachments() == attachment_count
