@@ -8,7 +8,15 @@ import struct
 from typing import Any
 
 from .bth import BthBuildResult, BthHeader, build_bth
-from .heap import HID_NULL, MAX_HEAP_ALLOCATION, HeapClientSignature, HeapImage, HeapNode
+from .heap import (
+    HID_NULL,
+    MAX_HEAP_ALLOCATION,
+    HeapClientSignature,
+    HeapId,
+    HeapImage,
+    HeapNode,
+    parse_page_map,
+)
 from .pc import PropertyType
 
 
@@ -353,7 +361,7 @@ class TableContext:
 
 
 def parse_tcinfo(
-    heap: HeapNode,
+    heap: HeapImage,
     tcinfo_hid: int,
 ) -> tuple[
     int,
@@ -365,7 +373,7 @@ def parse_tcinfo(
 ]:
     """Diagnostic parser for an in-memory TC builder."""
 
-    data = heap.get_allocation(tcinfo_hid)
+    data = _heap_allocation(heap, tcinfo_hid)
     if len(data) < TCINFO_FIXED_SIZE:
         raise ValueError("TCINFO allocation is truncated")
 
@@ -414,8 +422,28 @@ def parse_tcinfo(
     )
 
 
-def parse_row_index_header(heap: HeapNode, hid_row_index: int) -> BthHeader:
-    return BthHeader.unpack(heap.get_allocation(hid_row_index))
+def parse_row_index_header(heap: HeapImage, hid_row_index: int) -> BthHeader:
+    return BthHeader.unpack(_heap_allocation(heap, hid_row_index))
+
+
+def read_heap_allocation(heap: HeapImage, hid: int) -> bytes:
+    """Read one HID allocation from a serialized HeapImage."""
+
+    return _heap_allocation(heap, hid)
+
+
+def _heap_allocation(heap: HeapImage, hid: int) -> bytes:
+    parsed = HeapId.from_value(hid)
+    try:
+        block = heap.blocks[parsed.block_index].data
+    except IndexError as exc:
+        raise KeyError(f"unknown HID block {parsed.block_index}") from exc
+
+    c_alloc, _c_free, offsets = parse_page_map(block)
+    if not 1 <= parsed.index <= c_alloc:
+        raise KeyError(f"unknown HID allocation {parsed.index}")
+
+    return block[offsets[parsed.index - 1]:offsets[parsed.index]]
 
 
 def _column_width(property_type: PropertyType) -> int:
