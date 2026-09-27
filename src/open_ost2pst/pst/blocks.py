@@ -122,6 +122,12 @@ class DataBlockStore:
     def bbt_entries(self) -> tuple[BbtEntry, ...]:
         return tuple(block.bbt_entry for block in self._blocks)
 
+    @property
+    def chunks(self) -> tuple[tuple[int, bytes], ...]:
+        """Return absolute-offset chunks ready for final PST image assembly."""
+
+        return tuple((block.bref.ib, block.data) for block in self._blocks)
+
     def add(self, payload: bytes | bytearray | memoryview, *, c_ref: int = 1) -> DataBlockImage:
         raw = bytes(payload)
         if len(raw) > BLOCK_MAX_PAYLOAD:
