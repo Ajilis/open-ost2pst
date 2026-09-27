@@ -61,6 +61,19 @@ def test_convert_command_writes_pst_and_report(tmp_path, monkeypatch) -> None:
         "open_ost2pst.cli.load_mailbox",
         lambda _source: (mailbox, extraction),
     )
+    monkeypatch.setattr(
+        "open_ost2pst.cli.verify_against_mailbox",
+        lambda destination, mailbox, source_label="": SimpleNamespace(
+            ok=True,
+            mismatch_count=0,
+            to_dict=lambda: {
+                "ok": True,
+                "mismatch_count": 0,
+                "source": source_label,
+                "destination": str(destination),
+            },
+        ),
+    )
 
     result = _cmd_convert(source, destination, report_path)
 
@@ -72,6 +85,8 @@ def test_convert_command_writes_pst_and_report(tmp_path, monkeypatch) -> None:
     assert report["destination"] == str(destination)
     assert report["extraction"]["messages_loaded"] == 1
     assert report["writing"]["messages_written"] == 1
+    assert report["verification"]["ok"] is True
+    assert report["verification"]["mismatch_count"] == 0
 
 
 def test_verify_command_parses_source_json_and_report() -> None:
