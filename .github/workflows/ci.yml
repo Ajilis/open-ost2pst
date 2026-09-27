@@ -41,4 +41,4 @@ jobs:
           .venv-libpff/bin/python -m pip install -e ".[dev]"
 
       - name: Validate generated PST with libpff
-        run: .venv-libpff/bin/python -m pytest -q tests/test_libpff_ndb.py tests/test_libpff_pc.py
+        run: .venv-libpff/bin/python -m pytest -q tests/test_libpff_ndb.py tests/test_libpff_pc.py tests/test_libpff_tc.py

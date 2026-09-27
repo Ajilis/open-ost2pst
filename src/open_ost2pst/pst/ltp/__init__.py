@@ -41,6 +41,13 @@ __all__ = [
     "PropertyContextEntry",
     "PropertyContextImage",
     "PropertyType",
+    "PID_LTP_ROW_ID",
+    "PID_LTP_ROW_VER",
+    "TC_TYPE",
+    "TableColumn",
+    "TableContext",
+    "TableContextImage",
+    "TableLayout",
     "build_bth",
     "hid_block_index",
     "hid_index",
@@ -48,6 +55,8 @@ __all__ = [
     "parse_index_records",
     "parse_leaf_records",
     "parse_page_map",
+    "parse_row_index_header",
+    "parse_tcinfo",
 ]
 
 from .pc import (
@@ -55,4 +64,16 @@ from .pc import (
     PropertyContextEntry,
     PropertyContextImage,
     PropertyType,
+)
+
+from .tc import (
+    PID_LTP_ROW_ID,
+    PID_LTP_ROW_VER,
+    TC_TYPE,
+    TableColumn,
+    TableContext,
+    TableContextImage,
+    TableLayout,
+    parse_row_index_header,
+    parse_tcinfo,
 )
