@@ -1,4 +1,4 @@
-"""Physical Unicode PST data-block serialization and layout."""
+"""Physical Unicode PST block serialization and layout."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ class BlockTrailer:
     def for_block(cls, *, payload: bytes, ib: int, bid: int) -> "BlockTrailer":
         if len(payload) > BLOCK_MAX_PAYLOAD:
             raise ValueError(
-                f"data block payload exceeds {BLOCK_MAX_PAYLOAD} bytes"
+                f"block payload exceeds {BLOCK_MAX_PAYLOAD} bytes"
             )
         return cls(
             cb=len(payload),
@@ -83,17 +83,18 @@ class BlockOffsetAllocator:
 
 @dataclass(frozen=True, slots=True)
 class DataBlockImage:
-    """One fully serialized external data block and its BBT record."""
+    """One fully serialized NDB block and its BBT record."""
 
     bref: BRef
     payload_size: int
     padding_size: int
     data: bytes
     bbt_entry: BbtEntry
+    internal: bool = False
 
     def __post_init__(self) -> None:
-        if self.bref.bid & BID_INTERNAL:
-            raise ValueError("data blocks must use external BIDs")
+        if bool(self.bref.bid & BID_INTERNAL) != self.internal:
+            raise ValueError("block BID internal flag does not match image type")
         if self.payload_size != self.bbt_entry.cb:
             raise ValueError("payload_size must match BBT cb")
         if self.bref.bid != self.bbt_entry.bid:
@@ -108,7 +109,7 @@ class DataBlockImage:
 
 @dataclass(slots=True)
 class DataBlockStore:
-    """Allocate, serialize, and index external data blocks."""
+    """Allocate, serialize, and index external or internal NDB blocks."""
 
     offset_allocator: BlockOffsetAllocator
     bid_allocator: BlockBidAllocator
@@ -124,21 +125,25 @@ class DataBlockStore:
 
     @property
     def chunks(self) -> tuple[tuple[int, bytes], ...]:
-        """Return absolute-offset chunks ready for final PST image assembly."""
-
         return tuple((block.bref.ib, block.data) for block in self._blocks)
 
-    def add(self, payload: bytes | bytearray | memoryview, *, c_ref: int = 1) -> DataBlockImage:
+    def add(
+        self,
+        payload: bytes | bytearray | memoryview,
+        *,
+        c_ref: int = 1,
+        internal: bool = False,
+    ) -> DataBlockImage:
         raw = bytes(payload)
         if len(raw) > BLOCK_MAX_PAYLOAD:
             raise ValueError(
-                "payload exceeds one data block; XBLOCK/XXBLOCK support "
+                "payload exceeds one block; XBLOCK/XXBLOCK support "
                 "belongs to the next large-data milestone"
             )
 
         ib = self.offset_allocator.allocate(len(raw))
-        bid = self.bid_allocator.allocate(internal=False)
-        block_data = pack_data_block(payload=raw, ib=ib, bid=bid)
+        bid = self.bid_allocator.allocate(internal=internal)
+        block_data = pack_block(payload=raw, ib=ib, bid=bid)
         padding_size = len(block_data) - len(raw) - BLOCK_TRAILER_SIZE
 
         image = DataBlockImage(
@@ -152,9 +157,18 @@ class DataBlockStore:
                 cb=len(raw),
                 c_ref=c_ref,
             ),
+            internal=internal,
         )
         self._blocks.append(image)
         return image
+
+    def add_internal(
+        self,
+        payload: bytes | bytearray | memoryview,
+        *,
+        c_ref: int = 1,
+    ) -> DataBlockImage:
+        return self.add(payload, c_ref=c_ref, internal=True)
 
     def extend(
         self,
@@ -165,36 +179,38 @@ class DataBlockStore:
         return tuple(self.add(payload, c_ref=c_ref) for payload in payloads)
 
 
-def pack_data_block(*, payload: bytes, ib: int, bid: int) -> bytes:
-    """Serialize one external Unicode data block.
-
-    The trailer is placed at the end of the aligned block. Padding lies
-    between the payload and trailer and is excluded from the CRC.
-    """
+def pack_block(*, payload: bytes, ib: int, bid: int) -> bytes:
+    """Serialize one external or internal Unicode NDB block."""
 
     raw = bytes(payload)
     if len(raw) > BLOCK_MAX_PAYLOAD:
         raise ValueError(
-            f"data block payload exceeds {BLOCK_MAX_PAYLOAD} bytes"
+            f"block payload exceeds {BLOCK_MAX_PAYLOAD} bytes"
         )
-    if bid & BID_INTERNAL:
-        raise ValueError("data blocks must use external BIDs")
     if ib < 0 or ib > UINT64_MAX:
         raise ValueError("ib must fit in 64 bits")
     if ib % BLOCK_ALIGNMENT:
-        raise ValueError("data block IB must be aligned to 64 bytes")
+        raise ValueError("block IB must be aligned to 64 bytes")
 
     total_size = block_aligned_size(len(raw))
     if total_size > BLOCK_MAX_SIZE:
-        raise ValueError("data block exceeds the 8192-byte MS-PST limit")
+        raise ValueError("block exceeds the 8192-byte MS-PST limit")
 
     trailer = BlockTrailer.for_block(payload=raw, ib=ib, bid=bid).pack()
     padding_size = total_size - len(raw) - BLOCK_TRAILER_SIZE
-
     result = raw + (b"\x00" * padding_size) + trailer
+
     assert len(result) == total_size
     assert len(result) % BLOCK_ALIGNMENT == 0
     return result
+
+
+def pack_data_block(*, payload: bytes, ib: int, bid: int) -> bytes:
+    """Serialize one external Unicode data block."""
+
+    if bid & BID_INTERNAL:
+        raise ValueError("data blocks must use external BIDs")
+    return pack_block(payload=payload, ib=ib, bid=bid)
 
 
 def parse_block_trailer(block: bytes) -> BlockTrailer:
