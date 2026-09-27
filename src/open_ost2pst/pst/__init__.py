@@ -69,6 +69,15 @@ from .messaging import (
 from .ndb import Root, UnicodeHeader
 from .pages import PageAllocator, PageImage, PageTrailer, PageType
 from .primitives import BRef, NidType
+from .rtf import (
+    RTF_COMPRESSED_MAGIC,
+    RTF_HEADER_SIZE,
+    RTF_UNCOMPRESSED_MAGIC,
+    RtfCompressedHeader,
+    compress_rtf,
+    weak_crc32,
+    wrap_rtf_uncompressed,
+)
 from .subnodes import (
     SIBLOCK_LEVEL_INTERMEDIATE,
     SIBLOCK_MAX_ENTRIES,
@@ -138,6 +147,10 @@ __all__ = [
     "PageType",
     "PstWriter",
     "Root",
+    "RTF_COMPRESSED_MAGIC",
+    "RTF_HEADER_SIZE",
+    "RTF_UNCOMPRESSED_MAGIC",
+    "RtfCompressedHeader",
     "SIBLOCK_LEVEL_INTERMEDIATE",
     "SIBLOCK_MAX_ENTRIES",
     "SLBLOCK_LEVEL_LEAF",
@@ -150,6 +163,7 @@ __all__ = [
     "XBLOCK_MAX_ENTRIES",
     "XXBLOCK_LEVEL",
     "build_bbt",
+    "compress_rtf",
     "datetime_to_filetime",
     "build_bth",
     "build_minimal_ndb",
@@ -164,4 +178,6 @@ __all__ = [
     "parse_siblock",
     "parse_slblock",
     "parse_block_trailer",
+    "weak_crc32",
+    "wrap_rtf_uncompressed",
 ]

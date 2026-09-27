@@ -30,6 +30,8 @@ class MessageFingerprint:
     delivery_time: str | None
     creation_time: str | None
     is_read: bool | None
+    rtf_size: int | None
+    rtf_sha256: str | None
     attachments: tuple[AttachmentFingerprint, ...]
 
     @property
@@ -343,6 +345,16 @@ def _message_fingerprint(
         delivery_time=_normalize_datetime(message.delivery_time),
         creation_time=_normalize_datetime(message.creation_time),
         is_read=message.is_read,
+        rtf_size=(
+            len(message.body_rtf)
+            if message.body_rtf is not None
+            else None
+        ),
+        rtf_sha256=(
+            hashlib.sha256(message.body_rtf).hexdigest()
+            if message.body_rtf is not None
+            else None
+        ),
         attachments=tuple(
             _attachment_fingerprint(attachment_index, attachment)
             for attachment_index, attachment in enumerate(message.attachments)
@@ -392,6 +404,20 @@ def _compare_messages(
 
             # Missing source metadata means libpff could not provide a value,
             # so it is not meaningful to require a destination match.
+            if expected_value is None:
+                continue
+            if expected_value != actual_value:
+                add(
+                    "message",
+                    path,
+                    field,
+                    expected_value,
+                    actual_value,
+                )
+
+        for field in ("rtf_size", "rtf_sha256"):
+            expected_value = getattr(expected, field)
+            actual_value = getattr(actual, field)
             if expected_value is None:
                 continue
             if expected_value != actual_value:

@@ -8,6 +8,7 @@ from .image import NdbBuildResult, NdbImageBuilder
 from .ltp.pc import PropertyContext
 from .ltp.tc import TableContext
 from .primitives import NidType, make_nid, nid_index
+from .rtf import compress_rtf
 
 
 NID_MESSAGE_STORE = 0x0021
@@ -28,6 +29,7 @@ PR_MESSAGE_FLAGS = 0x0E07
 PR_HAS_ATTACH = 0x0E1B
 PR_ATTACH_SIZE = 0x0E20
 PR_BODY = 0x1000
+PR_RTF_COMPRESSED = 0x1009
 PR_HTML = 0x1013
 
 PR_DISPLAY_NAME = 0x3001
@@ -77,6 +79,7 @@ class MessagingMessage:
     display_to: str = ""
     display_cc: str = ""
     html_body: bytes | None = None
+    rtf_body: bytes | None = None
     delivery_filetime: int | None = None
     client_submit_filetime: int | None = None
     creation_filetime: int | None = None
@@ -146,6 +149,7 @@ class MessagingBuilder:
         display_to: str = "",
         display_cc: str = "",
         html_body: bytes | None = None,
+        rtf_body: bytes | None = None,
         delivery_filetime: int | None = None,
         client_submit_filetime: int | None = None,
         creation_filetime: int | None = None,
@@ -163,6 +167,7 @@ class MessagingBuilder:
             display_to=display_to,
             display_cc=display_cc,
             html_body=html_body,
+            rtf_body=rtf_body,
             delivery_filetime=delivery_filetime,
             client_submit_filetime=client_submit_filetime,
             creation_filetime=creation_filetime,
@@ -412,6 +417,11 @@ def _build_message_pc(message: MessagingMessage) -> PropertyContext:
         pc.set_unicode(PR_DISPLAY_CC, message.display_cc)
     if message.html_body:
         pc.set_binary(PR_HTML, message.html_body)
+    if message.rtf_body is not None:
+        pc.set_binary(
+            PR_RTF_COMPRESSED,
+            compress_rtf(message.rtf_body),
+        )
     if message.delivery_filetime is not None:
         pc.set_filetime(PR_MESSAGE_DELIVERY_TIME, message.delivery_filetime)
     if message.client_submit_filetime is not None:

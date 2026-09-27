@@ -298,6 +298,15 @@ def _extract_attachment(attachment: Any) -> Attachment:
     )
 
 
+def _normalize_rtf_body(value: Any) -> bytes | None:
+    if value is None:
+        return None
+    raw = bytes(value)
+    if raw.endswith(b"\x00"):
+        raw = raw[:-1]
+    return raw
+
+
 def _extract_message(message: Any, report: ExtractionReport) -> Message:
     flags = _property_integer(message, PR_MESSAGE_FLAGS)
 
@@ -307,7 +316,7 @@ def _extract_message(message: Any, report: ExtractionReport) -> Message:
         sender_email=_sender_email(message),
         body_text=_decode_body(_safe_attr(message, "plain_text_body")),
         body_html=_decode_body(_safe_attr(message, "html_body")),
-        body_rtf=_safe_attr(message, "rtf_body"),
+        body_rtf=_normalize_rtf_body(_safe_attr(message, "rtf_body")),
         delivery_time=_datetime_attr(message, "delivery_time"),
         creation_time=_datetime_attr(message, "creation_time"),
         is_read=bool(flags & MESSAGE_FLAG_READ) if flags is not None else None,

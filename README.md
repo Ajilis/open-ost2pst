@@ -71,7 +71,7 @@ open-ost2pst verify mailbox.pst --source mailbox.ost --report verify.json
 
 `verify` can validate a PST on its own or compare it against a source OST/PST. Source/destination comparison checks folder hierarchy and counts, message order/subjects/dates/read state, attachment counts/sizes, and SHA-256 hashes of attachment bytes. Verification exits non-zero when libpff extraction fails or mismatches are detected.
 
-Large variable properties, multi-block HN streams, large Row Matrices, zero-length binary values, and large attachments are supported through LTP subnodes plus XBLOCK/XXBLOCK data trees. Subnode BTrees automatically use SIBLOCK roots when more than 340 local subnodes are present, supporting up to 173,400 subnodes per local tree. RTF is extracted but not yet emitted. Data trees deeper than XXBLOCK remain future work.
+Large variable properties, multi-block HN streams, large Row Matrices, zero-length binary values, and large attachments are supported through LTP subnodes plus XBLOCK/XXBLOCK data trees. Subnode BTrees automatically use SIBLOCK roots when more than 340 local subnodes are present, supporting up to 173,400 subnodes per local tree. RTF bodies are preserved through PidTagRtfCompressed using a standards-compliant literal-only LZFu stream and are hash-verified after libpff reopen. Data trees deeper than XXBLOCK remain future work.
 
 Windows interoperability tooling is included under scripts/windows/ plus a manual Windows Outlook Interop workflow. The normal CI validates the Windows fixture generator and PowerShell syntax on windows-latest. Real SCANPST/classic-Outlook validation requires a dedicated self-hosted Windows runner with classic Outlook installed and a configured Outlook profile. See docs/windows-interop.md.
 
@@ -89,6 +89,7 @@ src/open_ost2pst/
     messaging.py
     writer.py
     large_data.py
+    rtf.py
     ltp/
       heap.py
       bth.py

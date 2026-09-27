@@ -242,3 +242,13 @@ def test_load_mailbox_skips_corrupt_attachment(monkeypatch, tmp_path):
 
 def test_decode_body_falls_back_to_windows_1252():
     assert pff_reader._decode_body(b"caf\xe9") == "café"
+
+
+def test_normalize_rtf_body_removes_pypff_terminal_null() -> None:
+    assert pff_reader._normalize_rtf_body(
+        b"{\\rtf1\\ansi test}\x00"
+    ) == b"{\\rtf1\\ansi test}"
+    assert pff_reader._normalize_rtf_body(
+        b"{\\rtf1\\ansi test}"
+    ) == b"{\\rtf1\\ansi test}"
+    assert pff_reader._normalize_rtf_body(None) is None
