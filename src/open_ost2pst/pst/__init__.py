@@ -9,6 +9,7 @@ from .amap import (
     AmapPageAllocator,
     pack_amap_page,
 )
+from .bridge import WriteReport, datetime_to_filetime, mailbox_to_messaging
 from .blocks import (
     BlockOffsetAllocator,
     BlockTrailer,
@@ -70,6 +71,7 @@ __all__ = [
     "AmapImage",
     "AmapPageAllocator",
     "BRef",
+    "WriteReport",
     "BTH_TYPE",
     "BbtEntry",
     "BthBuildResult",
@@ -115,9 +117,11 @@ __all__ = [
     "Root",
     "UnicodeHeader",
     "build_bbt",
+    "datetime_to_filetime",
     "build_bth",
     "build_minimal_ndb",
     "build_nbt",
+    "mailbox_to_messaging",
     "pack_amap_page",
     "pack_data_block",
     "parse_block_trailer",

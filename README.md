@@ -2,7 +2,7 @@
 
 Open-source toolkit for inspecting, recovering, and converting Microsoft Outlook OST data into PST.
 
-> **Status:** early development. The reader/model layer is being built first; the PST Unicode writer will follow the Microsoft MS-PST specification.
+> **Status:** early but functional end-to-end prototype. The project can read an OST/PST through libpff, normalize it into the mailbox model, and write a Unicode PST that is reopened successfully by libpff in CI.
 
 ## Goals
 
@@ -60,10 +60,13 @@ The OST reader expects the Python bindings for libpff to be installed separately
 ```bash
 open-ost2pst inspect mailbox.ost
 open-ost2pst convert mailbox.ost mailbox.pst
+open-ost2pst convert mailbox.ost mailbox.pst --report mailbox.report.json
 open-ost2pst verify mailbox.pst
 ```
 
-At the current stage, `inspect` is the first implemented path. `convert` and `verify` are intentionally staged as the PST writer and validator are developed.
+`inspect` and `convert` are implemented. `convert` performs the current read-only libpff extraction → mailbox model → Unicode PST pipeline and can emit a JSON extraction/write report. `verify` is still staged for the dedicated validation milestone.
+
+Current writer limits are explicit: large variable properties and attachments still need XBLOCK/XXBLOCK or external subnode storage, zero-length attachment payloads are not emitted yet, and RTF is not yet written. The bridge records these cases as warnings instead of aborting the whole conversion where possible.
 
 ## Project layout
 
@@ -74,7 +77,14 @@ src/open_ost2pst/
   reader/
     pff_reader.py
   pst/
+    bridge.py
+    messaging.py
     writer.py
+    ltp/
+      heap.py
+      bth.py
+      pc.py
+      tc.py
 
 tests/
 ```

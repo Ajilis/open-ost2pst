@@ -9,7 +9,11 @@ from typing import Sequence
 
 from open_ost2pst import __version__
 from open_ost2pst.pst import PstWriter
-from open_ost2pst.reader.pff_reader import PffUnavailableError, inspect_store
+from open_ost2pst.reader.pff_reader import (
+    PffUnavailableError,
+    inspect_store,
+    load_mailbox,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,6 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     convert_parser.add_argument("source", type=Path)
     convert_parser.add_argument("destination", type=Path)
+    convert_parser.add_argument(
+        "--report",
+        type=Path,
+        help="Write extraction/write counters and warnings as JSON",
+    )
 
     verify_parser = subparsers.add_parser(
         "verify", help="Verify a generated PST"
@@ -64,20 +73,54 @@ def _cmd_inspect(source: Path, as_json: bool) -> int:
     return 0
 
 
-def _cmd_convert(source: Path, destination: Path) -> int:
-    if not source.is_file():
+def _cmd_convert(
+    source: Path,
+    destination: Path,
+    report_path: Path | None = None,
+) -> int:
+    try:
+        mailbox, extraction = load_mailbox(source)
+    except FileNotFoundError:
         print(f"error: file not found: {source}")
         return 2
+    except PffUnavailableError as exc:
+        print(f"error: {exc}")
+        return 3
+    except Exception as exc:
+        print(f"error: OST/PST extraction failed: {exc}")
+        return 5
 
     writer = PstWriter()
     try:
-        # The reader-to-model conversion will be connected here when the
-        # mailbox extraction layer is complete.
-        writer.write(None, destination)  # type: ignore[arg-type]
-    except NotImplementedError as exc:
-        print(f"not implemented: {exc}")
-        return 4
+        writing = writer.write(mailbox, destination)
+    except (OSError, ValueError) as exc:
+        print(f"error: PST writing failed: {exc}")
+        return 5
 
+    if report_path is not None:
+        payload = {
+            "source": str(source),
+            "destination": str(destination),
+            "extraction": extraction.to_dict(),
+            "writing": writing.to_dict(),
+        }
+        try:
+            report_path.write_text(
+                json.dumps(payload, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            print(
+                f"error: PST was written but report could not be saved: {exc}"
+            )
+            return 5
+
+    print(
+        f"Wrote {destination}: "
+        f"{writing.folders_written} folders, "
+        f"{writing.messages_written} messages, "
+        f"{writing.attachments_written} attachments"
+    )
     return 0
 
 
@@ -95,7 +138,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "inspect":
         return _cmd_inspect(args.source, args.as_json)
     if args.command == "convert":
-        return _cmd_convert(args.source, args.destination)
+        return _cmd_convert(args.source, args.destination, args.report)
     if args.command == "verify":
         return _cmd_verify(args.pst)
 

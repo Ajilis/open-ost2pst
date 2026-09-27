@@ -1,11 +1,24 @@
-import pytest
-
-from open_ost2pst.model import Folder, Mailbox
+from open_ost2pst.model import Folder, Mailbox, Message
 from open_ost2pst.pst import PstWriter
 
 
-def test_writer_is_explicitly_not_implemented(tmp_path) -> None:
-    mailbox = Mailbox(Folder("root"))
+def test_writer_creates_unicode_pst_image(tmp_path) -> None:
+    mailbox = Mailbox(
+        Folder(
+            "root",
+            messages=[
+                Message(
+                    subject="Hello",
+                    body_text="Body",
+                )
+            ],
+        )
+    )
+    destination = tmp_path / "output.pst"
 
-    with pytest.raises(NotImplementedError):
-        PstWriter().write(mailbox, tmp_path / "output.pst")
+    report = PstWriter().write(mailbox, destination)
+
+    assert destination.is_file()
+    assert destination.read_bytes()[:4] == b"!BDN"
+    assert report.folders_written == 1
+    assert report.messages_written == 1
