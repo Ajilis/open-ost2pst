@@ -49,6 +49,12 @@ from .ltp import (
     TableLayout,
     build_bth,
 )
+from .messaging import (
+    MessagingBuildResult,
+    MessagingBuilder,
+    MessagingFolder,
+    MessagingMessage,
+)
 from .ndb import Root, UnicodeHeader
 from .pages import PageAllocator, PageImage, PageTrailer, PageType
 from .primitives import BRef, NidType
@@ -89,6 +95,10 @@ __all__ = [
     "TableContextImage",
     "TableLayout",
     "MAX_HEAP_ALLOCATION",
+    "MessagingBuildResult",
+    "MessagingBuilder",
+    "MessagingFolder",
+    "MessagingMessage",
     "NbtEntry",
     "NdbBuildResult",
     "NdbImageBuilder",
