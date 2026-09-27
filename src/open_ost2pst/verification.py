@@ -206,6 +206,48 @@ def compare_manifests(
     )
 
 
+def verify_against_mailbox(
+    destination: str | Path,
+    source_mailbox: Mailbox,
+    *,
+    source_label: str = "<mailbox>",
+) -> VerificationReport:
+    """Verify a PST against an already-extracted source mailbox."""
+
+    destination_path = Path(destination)
+    destination_mailbox, destination_extraction = load_mailbox(destination_path)
+
+    source_manifest = build_manifest(
+        source_mailbox,
+        path=source_label,
+    )
+    destination_manifest = build_manifest(
+        destination_mailbox,
+        path=destination_path,
+    )
+    (
+        mismatches,
+        mismatch_count,
+        mismatches_truncated,
+    ) = compare_manifests(source_manifest, destination_manifest)
+
+    return VerificationReport(
+        destination=str(destination_path),
+        source=source_label,
+        ok=(
+            not _has_extraction_failures(destination_extraction)
+            and mismatch_count == 0
+        ),
+        destination_extraction=destination_extraction,
+        source_extraction=None,
+        destination_manifest=destination_manifest,
+        source_manifest=source_manifest,
+        mismatches=mismatches,
+        mismatch_count=mismatch_count,
+        mismatches_truncated=mismatches_truncated,
+    )
+
+
 def verify_store(
     destination: str | Path,
     *,
