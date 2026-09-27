@@ -135,11 +135,6 @@ def _copy_message(
         if recipient.recipient_type == "cc"
     ]
 
-    if source.body_rtf:
-        report.warn(
-            f"RTF body not yet written for {source.subject!r}"
-        )
-
     try:
         delivery = datetime_to_filetime(source.delivery_time)
     except ValueError as exc:
@@ -165,6 +160,7 @@ def _copy_message(
             if source.body_html is not None
             else None
         ),
+        rtf_body=source.body_rtf,
         delivery_filetime=delivery,
         creation_filetime=created,
         is_read=True if source.is_read is None else source.is_read,
