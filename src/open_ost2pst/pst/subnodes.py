@@ -6,10 +6,12 @@ from dataclasses import dataclass
 import struct
 from typing import Iterable
 
-from .primitives import BLOCK_MAX_PAYLOAD
+from .primitives import BID_INTERNAL, BLOCK_MAX_PAYLOAD
 
 
 SUBNODE_BLOCK_TYPE = 0x02
+SLBLOCK_TYPE = SUBNODE_BLOCK_TYPE
+SIBLOCK_TYPE = SUBNODE_BLOCK_TYPE
 SLBLOCK_LEVEL_LEAF = 0x00
 SIBLOCK_LEVEL_INTERMEDIATE = 0x01
 SUBNODE_BLOCK_HEADER_SIZE = 8
@@ -58,6 +60,8 @@ class SubnodeIntermediateEntry:
             raise ValueError("SIENTRY NID must fit in 64 bits")
         if not 0 <= self.bid <= 0xFFFFFFFFFFFFFFFF:
             raise ValueError("SIENTRY BID must fit in 64 bits")
+        if not (self.bid & BID_INTERNAL):
+            raise ValueError("SIENTRY BID must reference an internal SLBLOCK")
 
     def pack(self) -> bytes:
         return struct.pack("<QQ", self.nid, self.bid)
