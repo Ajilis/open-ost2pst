@@ -294,3 +294,62 @@ def test_bth_validates_key_and_entry_widths() -> None:
             cb_ent=6,
             records=[(b"\x01\x00", b"x" * 5)],
         )
+
+
+def test_bth_can_span_multiple_hn_blocks() -> None:
+    heap = HeapNode(HeapClientSignature.PROPERTY_CONTEXT)
+    records = [
+        (
+            index.to_bytes(2, "little"),
+            (index * 7).to_bytes(6, "little"),
+        )
+        for index in range(1000)
+    ]
+
+    result = build_bth(
+        heap,
+        cb_key=2,
+        cb_ent=6,
+        records=records,
+    )
+
+    assert result.index_levels == 1
+    assert heap.block_count >= 2
+    assert hid_block_index(result.header_hid) >= 1
+
+    header = BthHeader.unpack(heap.get_allocation(result.header_hid))
+    assert header.root_hid == result.root_hid
+    assert heap.get_allocation(result.root_hid)
+
+
+def test_single_block_heap_can_be_embedded_in_ndb_builder() -> None:
+    from open_ost2pst.pst.image import NdbImageBuilder
+
+    heap = HeapNode(HeapClientSignature.PROPERTY_CONTEXT)
+    build_bth(
+        heap,
+        cb_key=2,
+        cb_ent=6,
+        records=[(b"\x01\x00", b"x" * 6)],
+    )
+
+    builder = NdbImageBuilder()
+    node = builder.add_heap_node(0x21, heap)
+    result = builder.build()
+
+    assert node.data_bid == result.blocks[0].bref.bid
+    assert result.blocks[0].data.startswith(
+        struct.pack("<HBB", struct.unpack_from("<H", result.blocks[0].data, 0)[0], HN_SIGNATURE, HeapClientSignature.PROPERTY_CONTEXT)
+    )
+
+
+def test_multi_block_heap_requires_ndb_data_tree_support() -> None:
+    from open_ost2pst.pst.image import NdbImageBuilder
+
+    heap = HeapNode(HeapClientSignature.PROPERTY_CONTEXT)
+    for _ in range(3):
+        heap.allocate(b"x" * 3580)
+
+    builder = NdbImageBuilder()
+    with pytest.raises(ValueError, match="XBLOCK/XXBLOCK"):
+        builder.add_heap_node(0x21, heap)
