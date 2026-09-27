@@ -74,18 +74,20 @@ def test_local_table_ids_match_pst_conventions() -> None:
     assert NID_RECIPIENT_TABLE == 0x0692
 
 
-def test_large_attachment_waits_for_external_property_storage() -> None:
+def test_large_attachment_uses_external_property_storage() -> None:
     builder = MessagingBuilder()
     inbox = builder.add_folder(builder.root, "Inbox")
     message = builder.add_message(inbox)
     builder.add_attachment(
         message,
         filename="large.bin",
-        data=b"x" * 3581,
+        data=b"x" * 100_000,
     )
 
-    with pytest.raises(ValueError, match="subnode storage"):
-        builder.build()
+    result = builder.build()
+
+    assert result.attachment_count == 1
+    assert result.data[:4] == b"!BDN"
 
 
 def test_recipient_table_contains_expected_rows_and_properties() -> None:
