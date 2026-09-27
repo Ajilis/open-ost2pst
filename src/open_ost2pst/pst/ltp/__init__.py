@@ -37,6 +37,10 @@ __all__ = [
     "HeapImage",
     "HeapNode",
     "HeapOverflowError",
+    "PropertyContext",
+    "PropertyContextEntry",
+    "PropertyContextImage",
+    "PropertyType",
     "build_bth",
     "hid_block_index",
     "hid_index",
@@ -45,3 +49,10 @@ __all__ = [
     "parse_leaf_records",
     "parse_page_map",
 ]
+
+from .pc import (
+    PropertyContext,
+    PropertyContextEntry,
+    PropertyContextImage,
+    PropertyType,
+)
