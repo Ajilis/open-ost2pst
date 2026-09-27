@@ -243,15 +243,22 @@ def test_tc_rejects_undeclared_row_column() -> None:
         table.add_row(1, {0x3001: "missing"})
 
 
-def test_tc_row_matrix_over_one_hn_allocation_requires_subnode() -> None:
+def test_tc_row_matrix_over_one_hn_allocation_uses_subnode() -> None:
+    from open_ost2pst.pst.primitives import NidType, nid_type
+
     table = TableContext()
     table.add_column(0x3001, PropertyType.UNICODE)
 
     for index in range(300):
         table.add_row(index + 1, {0x3001: "x"})
 
-    with pytest.raises(ValueError, match="subnode row storage"):
-        table.build()
+    image = table.build()
+
+    assert nid_type(image.row_matrix_hnid) == NidType.LTP
+    assert any(
+        value.nid == image.row_matrix_hnid
+        for value in image.external_values
+    )
 
 
 def test_tc_can_be_embedded_as_ndb_node() -> None:
