@@ -89,7 +89,7 @@ def test_mailbox_bridge_preserves_hierarchy_message_and_people() -> None:
     assert report.attachments_failed == 0
 
 
-def test_mailbox_bridge_skips_oversized_attachment_with_warning() -> None:
+def test_mailbox_bridge_preserves_large_attachment() -> None:
     mailbox = Mailbox(
         Folder(
             "Root",
@@ -99,7 +99,7 @@ def test_mailbox_bridge_skips_oversized_attachment_with_warning() -> None:
                     attachments=[
                         Attachment(
                             filename="large.bin",
-                            data=b"x" * 3581,
+                            data=b"x" * 100_000,
                         )
                     ],
                 )
@@ -109,14 +109,14 @@ def test_mailbox_bridge_skips_oversized_attachment_with_warning() -> None:
 
     builder, report = mailbox_to_messaging(mailbox)
 
-    assert builder.root.messages[0].attachments == []
+    assert len(builder.root.messages[0].attachments) == 1
+    assert len(builder.root.messages[0].attachments[0].data) == 100_000
     assert report.attachments_read == 1
-    assert report.attachments_written == 0
-    assert report.attachments_failed == 1
-    assert any("large.bin" in warning for warning in report.warnings)
+    assert report.attachments_written == 1
+    assert report.attachments_failed == 0
 
 
-def test_mailbox_bridge_truncates_large_unicode_value() -> None:
+def test_mailbox_bridge_preserves_large_unicode_value() -> None:
     mailbox = Mailbox(
         Folder(
             "Root",
@@ -129,8 +129,8 @@ def test_mailbox_bridge_truncates_large_unicode_value() -> None:
     builder, report = mailbox_to_messaging(mailbox)
 
     subject = builder.root.messages[0].subject
-    assert len(subject.encode("utf-16-le")) <= 3578
-    assert any("message subject truncated" in warning for warning in report.warnings)
+    assert subject == "x" * 4000
+    assert not any("truncated" in warning for warning in report.warnings)
 
 
 def test_unknown_recipient_type_is_preserved_as_to_with_warning() -> None:
