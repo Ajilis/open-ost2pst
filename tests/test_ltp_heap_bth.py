@@ -343,13 +343,16 @@ def test_single_block_heap_can_be_embedded_in_ndb_builder() -> None:
     )
 
 
-def test_multi_block_heap_requires_ndb_data_tree_support() -> None:
+def test_multi_block_heap_uses_xblock_data_tree() -> None:
     from open_ost2pst.pst.image import NdbImageBuilder
+    from open_ost2pst.pst.primitives import BID_INTERNAL
 
     heap = HeapNode(HeapClientSignature.PROPERTY_CONTEXT)
     for _ in range(3):
         heap.allocate(b"x" * 3580)
 
     builder = NdbImageBuilder()
-    with pytest.raises(ValueError, match="XBLOCK/XXBLOCK"):
-        builder.add_heap_node(0x21, heap)
+    node = builder.add_heap_node(0x21, heap)
+
+    assert node.data_bid & BID_INTERNAL
+    assert any(block.internal for block in builder.blocks)
