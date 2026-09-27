@@ -18,6 +18,7 @@ from .heap import (
     parse_page_map,
 )
 from .pc import PropertyType
+from .storage import ExternalValue, LtpNidAllocator
 
 
 PID_LTP_ROW_ID = 0x67F2
@@ -25,14 +26,6 @@ PID_LTP_ROW_VER = 0x67F3
 TC_TYPE = 0x7C
 TCINFO_FIXED_SIZE = 22
 TCOLDESC_SIZE = 8
-
-
-_VARIABLE_TYPES = {
-    PropertyType.STRING8,
-    PropertyType.UNICODE,
-    PropertyType.GUID,
-    PropertyType.BINARY,
-}
 
 
 @dataclass(slots=True)
@@ -86,17 +79,14 @@ class TableContextImage:
     row_count: int
     row_matrix_hnid: int
     tcinfo_hid: int
+    external_values: tuple[ExternalValue, ...] = ()
 
     def single_block(self) -> bytes:
         return self.heap.single_block()
 
 
 class TableContext:
-    """Build a small Table Context with an HN-resident Row Matrix.
-
-    Large Row Matrices are intentionally rejected until subnode/XBLOCK data
-    trees are available.
-    """
+    """Build a Table Context with HN or subnode-backed variable data."""
 
     def __init__(self) -> None:
         self._columns: dict[int, TableColumn] = {}
@@ -124,7 +114,9 @@ class TableContext:
         try:
             ptype = PropertyType(int(property_type))
         except ValueError as exc:
-            raise ValueError(f"unsupported TC property type: {property_type:#x}") from exc
+            raise ValueError(
+                f"unsupported TC property type: {property_type:#x}"
+            ) from exc
 
         existing = self._columns.get(property_id)
         if existing is not None:
@@ -171,6 +163,8 @@ class TableContext:
     def build(self) -> TableContextImage:
         layout = self._layout()
         heap = HeapNode(HeapClientSignature.TABLE_CONTEXT)
+        external_values: list[ExternalValue] = []
+        nid_allocator = LtpNidAllocator()
 
         matrix = bytearray()
         row_index_records: list[tuple[bytes, bytes]] = []
@@ -183,7 +177,13 @@ class TableContext:
                 if column.property_id not in values:
                     continue
 
-                cell = self._encode_cell(heap, column, values[column.property_id])
+                cell = self._encode_cell(
+                    heap,
+                    column,
+                    values[column.property_id],
+                    external_values,
+                    nid_allocator,
+                )
                 if len(cell) != column.cb_data:
                     raise AssertionError("encoded TC cell width mismatch")
 
@@ -203,12 +203,16 @@ class TableContext:
             )
 
         if matrix:
-            if len(matrix) > MAX_HEAP_ALLOCATION:
-                raise ValueError(
-                    "TC Row Matrix exceeds one HN allocation; "
-                    "subnode row storage is not implemented yet"
+            if len(matrix) <= MAX_HEAP_ALLOCATION:
+                row_matrix_hnid = heap.allocate(matrix)
+            else:
+                row_matrix_hnid = nid_allocator.allocate()
+                external_values.append(
+                    ExternalValue(
+                        nid=row_matrix_hnid,
+                        data=bytes(matrix),
+                    )
                 )
-            row_matrix_hnid = heap.allocate(matrix)
         else:
             row_matrix_hnid = HID_NULL
 
@@ -248,6 +252,7 @@ class TableContext:
             row_count=len(self._rows),
             row_matrix_hnid=row_matrix_hnid,
             tcinfo_hid=tcinfo_hid,
+            external_values=tuple(external_values),
         )
 
     def serialize(self) -> bytes:
@@ -263,18 +268,12 @@ class TableContext:
             if property_id not in (PID_LTP_ROW_ID, PID_LTP_ROW_VER)
         ]
 
-        # iBit order is logical and deterministic: mandatory RowId/RowVer first,
-        # then remaining columns by property tag.
         logical = [row_id, row_ver] + sorted(other_columns, key=lambda c: c.tag)
         for bit_index, column in enumerate(logical):
             column.bit_index = bit_index
 
-        # Physical row layout uses the required 8/4, 2, 1 byte groups.
-        # RowId and RowVer are kept at offsets 0 and 4.
         group_8_4 = [
-            column
-            for column in other_columns
-            if column.cb_data in (8, 4)
+            column for column in other_columns if column.cb_data in (8, 4)
         ]
         group_2 = [column for column in other_columns if column.cb_data == 2]
         group_1 = [column for column in other_columns if column.cb_data == 1]
@@ -316,6 +315,8 @@ class TableContext:
         heap: HeapNode,
         column: TableColumn,
         value: Any,
+        external_values: list[ExternalValue],
+        nid_allocator: LtpNidAllocator,
     ) -> bytes:
         ptype = column.property_type
 
@@ -343,8 +344,6 @@ class TableContext:
             data = str(value).encode("cp1252") + b"\x00"
         elif ptype == PropertyType.BINARY:
             data = bytes(value)
-            if not data:
-                raise ValueError("empty TC binary values are not supported yet")
         elif ptype == PropertyType.GUID:
             data = bytes(value)
             if len(data) != 16:
@@ -352,12 +351,12 @@ class TableContext:
         else:
             raise ValueError(f"unsupported TC property type: {int(ptype):#x}")
 
-        if len(data) > MAX_HEAP_ALLOCATION:
-            raise ValueError(
-                "TC cell value requires subnode storage; not implemented yet"
-            )
-        hid = heap.allocate(data)
-        return struct.pack("<I", hid)
+        if 0 < len(data) <= MAX_HEAP_ALLOCATION:
+            hnid = heap.allocate(data)
+        else:
+            hnid = nid_allocator.allocate()
+            external_values.append(ExternalValue(nid=hnid, data=data))
+        return struct.pack("<I", hnid)
 
 
 def parse_tcinfo(
