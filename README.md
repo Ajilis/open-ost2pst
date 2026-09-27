@@ -11,6 +11,7 @@ Open-source toolkit for inspecting, recovering, and converting Microsoft Outlook
 - Support damaged/orphaned OST recovery where `libpff` can expose recoverable items.
 - Write Unicode PST files.
 - Validate output by reopening the generated PST and comparing source/destination counts and hashes.
+- Validate generated PSTs with SCANPST and classic Outlook on a dedicated Windows runner.
 - Never modify the source OST.
 
 ## Architecture
@@ -72,6 +73,8 @@ open-ost2pst verify mailbox.pst --source mailbox.ost --report verify.json
 
 Large variable properties, multi-block HN streams, large Row Matrices, zero-length binary values, and large attachments are supported through LTP subnodes plus XBLOCK/XXBLOCK data trees. Subnode BTrees automatically use SIBLOCK roots when more than 340 local subnodes are present, supporting up to 173,400 subnodes per local tree. RTF is extracted but not yet emitted. Data trees deeper than XXBLOCK remain future work.
 
+Windows interoperability tooling is included under scripts/windows/ plus a manual Windows Outlook Interop workflow. The normal CI validates the Windows fixture generator and PowerShell syntax on windows-latest. Real SCANPST/classic-Outlook validation requires a dedicated self-hosted Windows runner with classic Outlook installed and a configured Outlook profile. See docs/windows-interop.md.
+
 ## Project layout
 
 ```text
@@ -93,6 +96,13 @@ src/open_ost2pst/
       tc.py
 
 tests/
+scripts/
+  generate_windows_interop_fixture.py
+  windows/
+    validate_scanpst.ps1
+    validate_outlook.ps1
+docs/
+  windows-interop.md
 ```
 
 ## References
