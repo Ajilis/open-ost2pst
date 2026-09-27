@@ -26,7 +26,15 @@ from .btree import (
     build_bbt,
     build_nbt,
 )
-from .image import NdbBuildResult, NdbImageBuilder, build_minimal_ndb
+from .image import NdbBuildResult, NdbImageBuilder, StoredNode, build_minimal_ndb
+from .large_data import (
+    DataTreeImage,
+    XBLOCK_LEVEL,
+    XBLOCK_MAX_ENTRIES,
+    XXBLOCK_LEVEL,
+    pack_xblock,
+    parse_xblock,
+)
 from .ltp import (
     BTH_TYPE,
     HID_NULL,
@@ -82,6 +90,7 @@ __all__ = [
     "BtEntry",
     "DataBlockImage",
     "DataBlockStore",
+    "DataTreeImage",
     "HID_NULL",
     "HeapClientSignature",
     "HeapId",
@@ -108,6 +117,7 @@ __all__ = [
     "NbtEntry",
     "NdbBuildResult",
     "NdbImageBuilder",
+    "StoredNode",
     "NidType",
     "PageAllocator",
     "PageImage",
@@ -116,6 +126,9 @@ __all__ = [
     "PstWriter",
     "Root",
     "UnicodeHeader",
+    "XBLOCK_LEVEL",
+    "XBLOCK_MAX_ENTRIES",
+    "XXBLOCK_LEVEL",
     "build_bbt",
     "datetime_to_filetime",
     "build_bth",
@@ -124,5 +137,7 @@ __all__ = [
     "mailbox_to_messaging",
     "pack_amap_page",
     "pack_data_block",
+    "pack_xblock",
+    "parse_xblock",
     "parse_block_trailer",
 ]
