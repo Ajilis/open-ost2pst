@@ -89,7 +89,7 @@ def build_fixture(output: Path, manifest_path: Path) -> None:
 
     manifest = {
         "root_name": ROOT_NAME,
-        "folder_count": 3,
+        "folder_count": 7,
         "message_count": 3,
         "attachment_count": 342,
         "subjects": [
