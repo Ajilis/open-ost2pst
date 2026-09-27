@@ -62,6 +62,10 @@ class NdbImageBuilder:
     def blocks(self) -> tuple[DataBlockImage, ...]:
         return self._blocks.blocks
 
+    @property
+    def bbt_entries(self):
+        return self._blocks.bbt_entries
+
     def add_block(
         self,
         payload: bytes | bytearray | memoryview,
