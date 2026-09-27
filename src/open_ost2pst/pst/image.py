@@ -12,6 +12,7 @@ from .ndb import Root, UnicodeHeader, VALID_AMAP
 from .primitives import BlockBidAllocator, PageBidAllocator
 from .ltp.heap import HeapNode
 from .ltp.pc import PropertyContext
+from .ltp.tc import TableContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +139,30 @@ class NdbImageBuilder:
         if len(image.heap.blocks) != 1:
             raise ValueError(
                 "multi-block Property Context requires XBLOCK/XXBLOCK support"
+            )
+        return self.add_data_node(
+            nid,
+            image.heap.blocks[0].data,
+            parent_nid=parent_nid,
+            sub_bid=sub_bid,
+            c_ref=c_ref,
+        )
+
+    def add_table_context(
+        self,
+        nid: int,
+        context: TableContext,
+        *,
+        parent_nid: int = 0,
+        sub_bid: int = 0,
+        c_ref: int = 1,
+    ) -> NbtEntry:
+        """Store a single-block Table Context as an NDB node."""
+
+        image = context.build()
+        if len(image.heap.blocks) != 1:
+            raise ValueError(
+                "multi-block Table Context requires XBLOCK/XXBLOCK support"
             )
         return self.add_data_node(
             nid,
