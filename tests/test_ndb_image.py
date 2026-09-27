@@ -111,4 +111,4 @@ def test_builder_supports_multiple_nodes_and_bbt_records() -> None:
     assert len(result.blocks) == 2
     assert len(builder.nodes) == 2
     assert result.nbt.root.ib != result.bbt.root.ib
-    assert [entry.bid for entry in builder._blocks.bbt_entries] == [4, 8]
+    assert [entry.bid for entry in builder.bbt_entries] == [4, 8]
