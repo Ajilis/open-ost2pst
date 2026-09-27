@@ -238,6 +238,14 @@ def _copy_message(
         report.recipients_written += 1
 
     for attachment in source.attachments:
+        if len(attachment.data) == 0:
+            report.attachments_failed += 1
+            report.warn(
+                f"attachment {attachment.filename!r} skipped: "
+                "zero-length binary attachment storage is not implemented yet"
+            )
+            continue
+
         if len(attachment.data) > MAX_HEAP_ALLOCATION:
             report.attachments_failed += 1
             report.warn(
