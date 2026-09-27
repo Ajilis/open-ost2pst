@@ -285,14 +285,15 @@ class MessagingBuilder:
         *,
         parent_nid: int,
     ) -> None:
-        data_bid = ndb.store_property_context(_build_message_pc(message))
-        subnodes: dict[int, object] = {}
+        stored_message = ndb.store_property_context_node(
+            _build_message_pc(message)
+        )
+        subnodes: dict[int, object] = dict(stored_message.subnodes)
 
         if message.recipients:
-            recipient_bid = ndb.store_table_context(
+            subnodes[NID_RECIPIENT_TABLE] = ndb.store_table_context_node(
                 _build_recipient_table(message)
             )
-            subnodes[NID_RECIPIENT_TABLE] = recipient_bid
 
         if message.attachments:
             attachment_table = TableContext()
@@ -302,9 +303,9 @@ class MessagingBuilder:
 
             for index, attachment in enumerate(message.attachments):
                 local_nid = make_nid(NidType.ATTACHMENT, 0x20 + index)
-                attachment_pc = _build_attachment_pc(attachment)
-                attachment_bid = ndb.store_property_context(attachment_pc)
-                subnodes[local_nid] = attachment_bid
+                subnodes[local_nid] = ndb.store_property_context_node(
+                    _build_attachment_pc(attachment)
+                )
                 attachment_table.add_row(
                     local_nid,
                     {
@@ -314,13 +315,14 @@ class MessagingBuilder:
                     },
                 )
 
-            table_bid = ndb.store_table_context(attachment_table)
-            subnodes[NID_ATTACHMENT_TABLE] = table_bid
+            subnodes[NID_ATTACHMENT_TABLE] = ndb.store_table_context_node(
+                attachment_table
+            )
 
         sub_bid = ndb.add_subnode_tree(subnodes) if subnodes else 0
         ndb.add_node(
             message.nid,
-            data_bid,
+            stored_message.data_bid,
             sub_bid=sub_bid,
             parent_nid=parent_nid,
         )

@@ -37,6 +37,8 @@ __all__ = [
     "HeapImage",
     "HeapNode",
     "HeapOverflowError",
+    "ExternalValue",
+    "LtpNidAllocator",
     "PropertyContext",
     "PropertyContextEntry",
     "PropertyContextImage",
@@ -77,3 +79,5 @@ from .tc import (
     parse_row_index_header,
     parse_tcinfo,
 )
+
+from .storage import ExternalValue, LtpNidAllocator

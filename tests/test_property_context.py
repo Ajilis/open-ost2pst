@@ -162,19 +162,29 @@ def test_empty_pc_has_bth_header_with_null_root() -> None:
     assert header.root_hid == HID_NULL
 
 
-def test_pc_rejects_variable_value_larger_than_one_hn_allocation() -> None:
+def test_pc_large_variable_value_uses_ltp_subnode() -> None:
+    from open_ost2pst.pst.primitives import NidType, nid_type
+
     pc = PropertyContext()
     pc.set_binary(0x3701, b"x" * 3581)
 
-    with pytest.raises(ValueError, match="subnode storage"):
-        pc.build()
+    image = pc.build()
+    entry = _entry_by_id(image, 0x3701)
+
+    assert nid_type(entry.hnid) == NidType.LTP
+    assert len(image.external_values) == 1
+    assert image.external_values[0].nid == entry.hnid
+    assert image.external_values[0].data == b"x" * 3581
 
 
-def test_pc_rejects_empty_binary_until_zero_length_hnid_is_supported() -> None:
+def test_pc_empty_binary_uses_zero_length_subnode() -> None:
     pc = PropertyContext()
+    pc.set_binary(0x3701, b"")
 
-    with pytest.raises(ValueError, match="empty PT_BINARY"):
-        pc.set_binary(0x3701, b"")
+    image = pc.build()
+
+    assert len(image.external_values) == 1
+    assert image.external_values[0].data == b""
 
 
 def test_pc_can_be_embedded_as_message_store_ndb_node() -> None:
@@ -192,14 +202,15 @@ def test_pc_can_be_embedded_as_message_store_ndb_node() -> None:
     assert result.blocks[0].data[3] == 0xBC
 
 
-def test_pc_multi_block_embedding_waits_for_xblock_support() -> None:
+def test_pc_multi_block_embedding_uses_xblock_support() -> None:
+    from open_ost2pst.pst.primitives import BID_INTERNAL
+
     pc = PropertyContext()
-    # Many small binary values create enough heap allocations/BTH nodes
-    # to force the PC over one HN block.
     for index in range(800):
         pc.set_binary(0x8000 + index, b"x" * 8)
 
     builder = NdbImageBuilder()
+    node = builder.add_property_context(0x21, pc)
 
-    with pytest.raises(ValueError, match="XBLOCK/XXBLOCK"):
-        builder.add_property_context(0x21, pc)
+    assert node.data_bid & BID_INTERNAL
+    assert any(block.internal for block in builder.blocks)

@@ -1,4 +1,4 @@
-"""Assembly of a complete minimal Unicode PST NDB image."""
+"""Assembly of a complete Unicode PST NDB image."""
 
 from __future__ import annotations
 
@@ -9,12 +9,26 @@ from pathlib import Path
 from .amap import AmapAllocator
 from .blocks import DataBlockImage, DataBlockStore
 from .btree import BTreeResult, NbtEntry, build_bbt, build_nbt
+from .large_data import (
+    DataTreeImage,
+    store_block_sequence,
+    store_data_stream as store_large_data_stream,
+)
+from .ltp.heap import HeapImage, HeapNode
+from .ltp.pc import PropertyContext
+from .ltp.storage import ExternalValue
+from .ltp.tc import TableContext
 from .ndb import Root, UnicodeHeader, VALID_AMAP
 from .primitives import BlockBidAllocator, PageBidAllocator
-from .ltp.heap import HeapNode
-from .ltp.pc import PropertyContext
-from .ltp.tc import TableContext
 from .subnodes import SubnodeEntry, pack_slblock
+
+
+@dataclass(frozen=True, slots=True)
+class StoredNode:
+    """NDB data BID plus optional local subnodes."""
+
+    data_bid: int
+    subnodes: Mapping[int, "StoredNode"] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,11 +50,7 @@ class NdbBuildResult:
 
 @dataclass(slots=True)
 class NdbImageBuilder:
-    """Build a self-contained Unicode PST NDB layer.
-
-    This deliberately stops at the NDB boundary: callers supply node payload
-    bytes and NIDs. LTP/Messaging will later construct the payloads.
-    """
+    """Build a self-contained Unicode PST NDB layer."""
 
     amap: AmapAllocator = field(default_factory=AmapAllocator)
     block_bids: BlockBidAllocator = field(
@@ -92,21 +102,79 @@ class NdbImageBuilder:
     ) -> DataBlockImage:
         return self._blocks.add_internal(payload, c_ref=c_ref)
 
+    def store_data_stream(
+        self,
+        data: bytes | bytearray | memoryview,
+        *,
+        c_ref: int = 1,
+    ) -> DataTreeImage:
+        return store_large_data_stream(
+            self._blocks,
+            data,
+            c_ref=c_ref,
+        )
+
+    def store_heap_image(
+        self,
+        heap: HeapImage,
+        *,
+        c_ref: int = 1,
+    ) -> DataTreeImage:
+        return store_block_sequence(
+            self._blocks,
+            (block.data for block in heap.blocks),
+            c_ref=c_ref,
+        )
+
+    def store_property_context_node(
+        self,
+        context: PropertyContext,
+        *,
+        c_ref: int = 1,
+    ) -> StoredNode:
+        image = context.build()
+        data_tree = self.store_heap_image(image.heap, c_ref=c_ref)
+        subnodes = self._store_external_values(
+            image.external_values,
+            c_ref=c_ref,
+        )
+        return StoredNode(
+            data_bid=data_tree.root_bid,
+            subnodes=subnodes,
+        )
+
+    def store_table_context_node(
+        self,
+        context: TableContext,
+        *,
+        c_ref: int = 1,
+    ) -> StoredNode:
+        image = context.build()
+        data_tree = self.store_heap_image(image.heap, c_ref=c_ref)
+        subnodes = self._store_external_values(
+            image.external_values,
+            c_ref=c_ref,
+        )
+        return StoredNode(
+            data_bid=data_tree.root_bid,
+            subnodes=subnodes,
+        )
+
     def store_property_context(
         self,
         context: PropertyContext,
         *,
         c_ref: int = 1,
     ) -> int:
-        image = context.build()
-        if len(image.heap.blocks) != 1:
+        """Legacy helper for a PC that has no external-value subnodes."""
+
+        stored = self.store_property_context_node(context, c_ref=c_ref)
+        if stored.subnodes:
             raise ValueError(
-                "multi-block Property Context requires XBLOCK/XXBLOCK support"
+                "Property Context has external subnodes; "
+                "use store_property_context_node()"
             )
-        return self.add_block(
-            image.heap.blocks[0].data,
-            c_ref=c_ref,
-        ).bref.bid
+        return stored.data_bid
 
     def store_table_context(
         self,
@@ -114,15 +182,15 @@ class NdbImageBuilder:
         *,
         c_ref: int = 1,
     ) -> int:
-        image = context.build()
-        if len(image.heap.blocks) != 1:
+        """Legacy helper for a TC that has no external-value subnodes."""
+
+        stored = self.store_table_context_node(context, c_ref=c_ref)
+        if stored.subnodes:
             raise ValueError(
-                "multi-block Table Context requires XBLOCK/XXBLOCK support"
+                "Table Context has external subnodes; "
+                "use store_table_context_node()"
             )
-        return self.add_block(
-            image.heap.blocks[0].data,
-            c_ref=c_ref,
-        ).bref.bid
+        return stored.data_bid
 
     def add_subnode_tree(
         self,
@@ -131,12 +199,17 @@ class NdbImageBuilder:
         entries: list[SubnodeEntry] = []
         for nid in sorted(subnodes):
             value = subnodes[nid]
-            if isinstance(value, tuple):
+
+            if isinstance(value, StoredNode):
+                data_bid = value.data_bid
+                nested = value.subnodes
+            elif isinstance(value, tuple):
                 data_bid, nested = value
-                sub_bid = self.add_subnode_tree(nested) if nested else 0
             else:
                 data_bid = value
-                sub_bid = 0
+                nested = {}
+
+            sub_bid = self.add_subnode_tree(nested) if nested else 0
             entries.append(
                 SubnodeEntry(
                     nid=nid,
@@ -176,23 +249,13 @@ class NdbImageBuilder:
         sub_bid: int = 0,
         c_ref: int = 1,
     ) -> NbtEntry:
-        """Store a single-block HN as an NDB node.
-
-        Multi-block HNs require an XBLOCK/XXBLOCK data tree, which is a later
-        NDB milestone.
-        """
-
         heap_image = heap.build()
-        if len(heap_image.blocks) != 1:
-            raise ValueError(
-                "multi-block HN requires XBLOCK/XXBLOCK support"
-            )
-        return self.add_data_node(
+        data_tree = self.store_heap_image(heap_image, c_ref=c_ref)
+        return self.add_node(
             nid,
-            heap_image.blocks[0].data,
+            data_tree.root_bid,
             parent_nid=parent_nid,
             sub_bid=sub_bid,
-            c_ref=c_ref,
         )
 
     def add_property_context(
@@ -204,19 +267,21 @@ class NdbImageBuilder:
         sub_bid: int = 0,
         c_ref: int = 1,
     ) -> NbtEntry:
-        """Store a single-block Property Context as an NDB node."""
-
-        image = context.build()
-        if len(image.heap.blocks) != 1:
+        stored = self.store_property_context_node(context, c_ref=c_ref)
+        generated_sub_bid = (
+            self.add_subnode_tree(stored.subnodes)
+            if stored.subnodes
+            else 0
+        )
+        if generated_sub_bid and sub_bid:
             raise ValueError(
-                "multi-block Property Context requires XBLOCK/XXBLOCK support"
+                "cannot combine explicit sub_bid with PC external subnodes"
             )
-        return self.add_data_node(
+        return self.add_node(
             nid,
-            image.heap.blocks[0].data,
+            stored.data_bid,
             parent_nid=parent_nid,
-            sub_bid=sub_bid,
-            c_ref=c_ref,
+            sub_bid=generated_sub_bid or sub_bid,
         )
 
     def add_table_context(
@@ -228,19 +293,21 @@ class NdbImageBuilder:
         sub_bid: int = 0,
         c_ref: int = 1,
     ) -> NbtEntry:
-        """Store a single-block Table Context as an NDB node."""
-
-        image = context.build()
-        if len(image.heap.blocks) != 1:
+        stored = self.store_table_context_node(context, c_ref=c_ref)
+        generated_sub_bid = (
+            self.add_subnode_tree(stored.subnodes)
+            if stored.subnodes
+            else 0
+        )
+        if generated_sub_bid and sub_bid:
             raise ValueError(
-                "multi-block Table Context requires XBLOCK/XXBLOCK support"
+                "cannot combine explicit sub_bid with TC external subnodes"
             )
-        return self.add_data_node(
+        return self.add_node(
             nid,
-            image.heap.blocks[0].data,
+            stored.data_bid,
             parent_nid=parent_nid,
-            sub_bid=sub_bid,
-            c_ref=c_ref,
+            sub_bid=generated_sub_bid or sub_bid,
         )
 
     def add_data_node(
@@ -252,10 +319,10 @@ class NdbImageBuilder:
         sub_bid: int = 0,
         c_ref: int = 1,
     ) -> NbtEntry:
-        block = self.add_block(payload, c_ref=c_ref)
+        data_tree = self.store_data_stream(payload, c_ref=c_ref)
         return self.add_node(
             nid,
-            block.bref.bid,
+            data_tree.root_bid,
             sub_bid=sub_bid,
             parent_nid=parent_nid,
         )
@@ -271,7 +338,6 @@ class NdbImageBuilder:
             bid_allocator=self.page_bids,
         )
 
-        # BBT contains data/internal blocks, not NBT/BBT pages.
         bbt = build_bbt(
             self._blocks.bbt_entries,
             offset_allocator=page_allocator,
@@ -297,8 +363,6 @@ class NdbImageBuilder:
         image = bytearray(root.file_eof)
         _write_chunk(image, 0, header.pack(), "HEADER")
 
-        # Generate AMap bytes only after every block/page allocation has been
-        # recorded, otherwise the bitmap would describe a stale layout.
         for ib, data in self.amap.chunks:
             _write_chunk(image, ib, data, f"AMap@{ib:#x}")
 
@@ -322,14 +386,20 @@ class NdbImageBuilder:
             amap=self.amap,
         )
 
+    def _store_external_values(
+        self,
+        values: tuple[ExternalValue, ...],
+        *,
+        c_ref: int,
+    ) -> dict[int, StoredNode]:
+        result: dict[int, StoredNode] = {}
+        for value in values:
+            tree = self.store_data_stream(value.data, c_ref=c_ref)
+            result[value.nid] = StoredNode(data_bid=tree.root_bid)
+        return result
+
 
 def build_minimal_ndb() -> NdbBuildResult:
-    """Build the smallest useful NDB used by integration tests.
-
-    NID 0x21 is the well-known Message Store node. Its payload is intentionally
-    opaque at this layer; pypff opening the file validates the NDB structures.
-    """
-
     builder = NdbImageBuilder()
     builder.add_data_node(0x21, b"x" * 64)
     return builder.build()

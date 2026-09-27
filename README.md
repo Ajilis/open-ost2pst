@@ -66,7 +66,7 @@ open-ost2pst verify mailbox.pst
 
 `inspect` and `convert` are implemented. `convert` performs the current read-only libpff extraction → mailbox model → Unicode PST pipeline and can emit a JSON extraction/write report. `verify` is still staged for the dedicated validation milestone.
 
-Current writer limits are explicit: large variable properties and attachments still need XBLOCK/XXBLOCK or external subnode storage, zero-length attachment payloads are not emitted yet, and RTF is not yet written. The bridge records these cases as warnings instead of aborting the whole conversion where possible.
+Large variable properties, multi-block HN streams, large Row Matrices, zero-length binary values, and large attachments are supported through LTP subnodes plus XBLOCK/XXBLOCK data trees. RTF is extracted but not yet emitted. Very large subnode sets that require SIBLOCK and data trees deeper than XXBLOCK remain future work.
 
 ## Project layout
 
@@ -80,6 +80,7 @@ src/open_ost2pst/
     bridge.py
     messaging.py
     writer.py
+    large_data.py
     ltp/
       heap.py
       bth.py

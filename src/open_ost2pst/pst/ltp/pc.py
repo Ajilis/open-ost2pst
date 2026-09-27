@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 import struct
-from typing import Iterable
 
 from .bth import BthBuildResult, build_bth, parse_leaf_records
 from .heap import (
@@ -15,6 +14,7 @@ from .heap import (
     HeapImage,
     HeapNode,
 )
+from .storage import ExternalValue, LtpNidAllocator
 
 
 class PropertyType(IntEnum):
@@ -65,6 +65,7 @@ class PropertyContextImage:
     heap: HeapImage
     bth: BthBuildResult
     entries: tuple[PropertyContextEntry, ...]
+    external_values: tuple[ExternalValue, ...] = ()
 
     def single_block(self) -> bytes:
         return self.heap.single_block()
@@ -165,13 +166,11 @@ class PropertyContext:
         property_id: int,
         value: bytes | bytearray | memoryview,
     ) -> None:
-        raw = bytes(value)
-        if not raw:
-            raise ValueError(
-                "empty PT_BINARY is not emitted until zero-length HNID "
-                "semantics are implemented"
-            )
-        self._set_variable(property_id, PropertyType.BINARY, raw)
+        self._set_variable(
+            property_id,
+            PropertyType.BINARY,
+            bytes(value),
+        )
 
     def set_guid(
         self,
@@ -187,18 +186,20 @@ class PropertyContext:
         heap = HeapNode(HeapClientSignature.PROPERTY_CONTEXT)
         records: list[tuple[bytes, bytes]] = []
         entries: list[PropertyContextEntry] = []
+        external_values: list[ExternalValue] = []
+        nid_allocator = LtpNidAllocator()
 
         for property_id in sorted(self._properties):
             prop = self._properties[property_id]
             if prop.inline:
                 hnid = int.from_bytes(prop.data.ljust(4, b"\x00"), "little")
-            else:
-                if len(prop.data) > MAX_HEAP_ALLOCATION:
-                    raise ValueError(
-                        f"property 0x{property_id:04x} exceeds one HN "
-                        "allocation; subnode storage is not implemented yet"
-                    )
+            elif 0 < len(prop.data) <= MAX_HEAP_ALLOCATION:
                 hnid = heap.allocate(prop.data)
+            else:
+                hnid = nid_allocator.allocate()
+                external_values.append(
+                    ExternalValue(nid=hnid, data=prop.data)
+                )
 
             entry = PropertyContextEntry(
                 property_id=property_id,
@@ -219,6 +220,7 @@ class PropertyContext:
             heap=heap.build(),
             bth=bth,
             entries=tuple(entries),
+            external_values=tuple(external_values),
         )
 
     def serialize(self) -> bytes:
@@ -248,8 +250,6 @@ class PropertyContext:
         data: bytes,
     ) -> None:
         self._validate_property_id(property_id)
-        if not data:
-            raise ValueError("variable PC values must be non-empty")
         self._properties[property_id] = _PropertyValue(
             property_type=property_type,
             data=data,

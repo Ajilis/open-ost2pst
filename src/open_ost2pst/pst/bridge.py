@@ -8,7 +8,6 @@ from typing import Any
 
 from open_ost2pst.model import Folder, Mailbox, Message, Recipient
 
-from .ltp.heap import MAX_HEAP_ALLOCATION
 from .messaging import (
     RECIPIENT_TYPE_BCC,
     RECIPIENT_TYPE_CC,
@@ -47,12 +46,7 @@ def mailbox_to_messaging(
     *,
     store_name: str = "Open OST2PST Store",
 ) -> tuple[MessagingBuilder, WriteReport]:
-    """Translate a format-neutral mailbox into Messaging objects.
-
-    The current writer is deliberately best-effort. Values that exceed the
-    single-HN-allocation limit are shortened or skipped with a warning instead
-    of aborting the whole mailbox.
-    """
+    """Translate a format-neutral mailbox into Messaging objects."""
 
     report = WriteReport(
         folders_read=mailbox.folder_count,
@@ -67,11 +61,7 @@ def mailbox_to_messaging(
 
     builder = MessagingBuilder(
         store_name=store_name,
-        root_name=_fit_unicode(
-            mailbox.root.name,
-            "root folder name",
-            report,
-        ),
+        root_name=mailbox.root.name,
     )
 
     _copy_folder_contents(
@@ -118,7 +108,7 @@ def _copy_folder_contents(
     for child in source.folders:
         child_destination = builder.add_folder(
             destination,
-            _fit_unicode(child.name, "folder name", report),
+            child.name,
         )
         _copy_folder_contents(
             child,
@@ -145,49 +135,6 @@ def _copy_message(
         if recipient.recipient_type == "cc"
     ]
 
-    body_text = _fit_unicode(
-        source.body_text or "",
-        f"message body {source.subject!r}",
-        report,
-    )
-    subject = _fit_unicode(
-        source.subject or "",
-        "message subject",
-        report,
-    )
-    sender_name = _fit_unicode(
-        source.sender_name or "",
-        "sender name",
-        report,
-    )
-    sender_email = _fit_unicode(
-        source.sender_email or "",
-        "sender email",
-        report,
-    )
-    display_to = _fit_unicode(
-        "; ".join(value for value in to_values if value),
-        "display To",
-        report,
-    )
-    display_cc = _fit_unicode(
-        "; ".join(value for value in cc_values if value),
-        "display Cc",
-        report,
-    )
-
-    html_body: bytes | None = None
-    if source.body_html is not None:
-        encoded_html = source.body_html.encode("utf-8")
-        if len(encoded_html) <= MAX_HEAP_ALLOCATION:
-            html_body = encoded_html
-        else:
-            report.warn(
-                f"HTML body skipped for {source.subject!r}: "
-                f"{len(encoded_html)} bytes exceeds current "
-                f"{MAX_HEAP_ALLOCATION}-byte property limit"
-            )
-
     if source.body_rtf:
         report.warn(
             f"RTF body not yet written for {source.subject!r}"
@@ -207,13 +154,17 @@ def _copy_message(
 
     target = builder.add_message(
         folder,
-        subject=subject,
-        body=body_text,
-        sender_name=sender_name,
-        sender_email=sender_email,
-        display_to=display_to,
-        display_cc=display_cc,
-        html_body=html_body,
+        subject=source.subject or "",
+        body=source.body_text or "",
+        sender_name=source.sender_name or "",
+        sender_email=source.sender_email or "",
+        display_to="; ".join(value for value in to_values if value),
+        display_cc="; ".join(value for value in cc_values if value),
+        html_body=(
+            source.body_html.encode("utf-8")
+            if source.body_html is not None
+            else None
+        ),
         delivery_filetime=delivery,
         client_submit_filetime=created,
         is_read=True if source.is_read is None else source.is_read,
@@ -223,85 +174,22 @@ def _copy_message(
         recipient_type = _recipient_type(recipient, report)
         builder.add_recipient(
             target,
-            name=_fit_unicode(
-                recipient.name or "",
-                "recipient name",
-                report,
-            ),
-            email=_fit_unicode(
-                recipient.email or "",
-                "recipient email",
-                report,
-            ),
+            name=recipient.name or "",
+            email=recipient.email or "",
             recipient_type=recipient_type,
         )
         report.recipients_written += 1
 
     for attachment in source.attachments:
-        if len(attachment.data) == 0:
-            report.attachments_failed += 1
-            report.warn(
-                f"attachment {attachment.filename!r} skipped: "
-                "zero-length binary attachment storage is not implemented yet"
-            )
-            continue
-
-        if len(attachment.data) > MAX_HEAP_ALLOCATION:
-            report.attachments_failed += 1
-            report.warn(
-                f"attachment {attachment.filename!r} skipped: "
-                f"{len(attachment.data)} bytes exceeds current "
-                f"{MAX_HEAP_ALLOCATION}-byte property limit"
-            )
-            continue
-
         builder.add_attachment(
             target,
-            filename=_fit_unicode(
-                attachment.filename or "attachment.bin",
-                "attachment filename",
-                report,
-            ),
+            filename=attachment.filename or "attachment.bin",
             data=attachment.data,
-            mime_type=_fit_unicode(
-                attachment.mime_type,
-                "attachment MIME type",
-                report,
-            )
-            if attachment.mime_type
-            else None,
+            mime_type=attachment.mime_type,
         )
         report.attachments_written += 1
 
     report.messages_written += 1
-
-
-def _fit_unicode(
-    value: str | None,
-    label: str,
-    report: WriteReport,
-) -> str:
-    text = value or ""
-    encoded = text.encode("utf-16-le")
-    max_payload = MAX_HEAP_ALLOCATION - 2
-
-    if len(encoded) <= max_payload:
-        return text
-
-    # Preserve complete UTF-16 code units and leave room for the terminator.
-    truncated = encoded[: max_payload - (max_payload % 2)]
-    while True:
-        try:
-            result = truncated.decode("utf-16-le")
-            break
-        except UnicodeDecodeError:
-            truncated = truncated[:-2]
-
-    report.warn(
-        f"{label} truncated from {len(encoded)} to {len(truncated)} bytes "
-        f"for current HN limit"
-    )
-    return result
 
 
 def _recipient_label(recipient: Recipient) -> str:
