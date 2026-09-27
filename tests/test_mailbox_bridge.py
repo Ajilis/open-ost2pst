@@ -26,6 +26,7 @@ def test_mailbox_bridge_preserves_hierarchy_message_and_people() -> None:
         sender_email="alice@example.com",
         body_text="Body",
         body_html="<p>Body</p>",
+        body_rtf=b"{\\rtf1\\ansi Body}",
         is_read=False,
         recipients=[
             Recipient(
@@ -69,6 +70,7 @@ def test_mailbox_bridge_preserves_hierarchy_message_and_people() -> None:
     assert target.subject == "Hello"
     assert target.body == "Body"
     assert target.html_body == b"<p>Body</p>"
+    assert target.rtf_body == b"{\\rtf1\\ansi Body}"
     assert target.is_read is False
     assert target.display_to == "Bob"
     assert target.display_cc == "Carol"
