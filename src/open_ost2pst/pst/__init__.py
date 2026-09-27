@@ -26,6 +26,18 @@ from .btree import (
     build_nbt,
 )
 from .image import NdbBuildResult, NdbImageBuilder, build_minimal_ndb
+from .ltp import (
+    BTH_TYPE,
+    HID_NULL,
+    MAX_HEAP_ALLOCATION,
+    BthBuildResult,
+    BthHeader,
+    HeapClientSignature,
+    HeapId,
+    HeapNode,
+    HeapOverflowError,
+    build_bth,
+)
 from .ndb import Root, UnicodeHeader
 from .pages import PageAllocator, PageImage, PageTrailer, PageType
 from .primitives import BRef, NidType
@@ -39,13 +51,22 @@ __all__ = [
     "AmapImage",
     "AmapPageAllocator",
     "BRef",
+    "BTH_TYPE",
     "BbtEntry",
+    "BthBuildResult",
+    "BthHeader",
     "BTreeResult",
     "BlockOffsetAllocator",
     "BlockTrailer",
     "BtEntry",
     "DataBlockImage",
     "DataBlockStore",
+    "HID_NULL",
+    "HeapClientSignature",
+    "HeapId",
+    "HeapNode",
+    "HeapOverflowError",
+    "MAX_HEAP_ALLOCATION",
     "NbtEntry",
     "NdbBuildResult",
     "NdbImageBuilder",
@@ -58,6 +79,7 @@ __all__ = [
     "Root",
     "UnicodeHeader",
     "build_bbt",
+    "build_bth",
     "build_minimal_ndb",
     "build_nbt",
     "pack_amap_page",
