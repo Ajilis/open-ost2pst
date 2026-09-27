@@ -36,6 +36,10 @@ from .ltp import (
     HeapId,
     HeapNode,
     HeapOverflowError,
+    PropertyContext,
+    PropertyContextEntry,
+    PropertyContextImage,
+    PropertyType,
     build_bth,
 )
 from .ndb import Root, UnicodeHeader
@@ -66,6 +70,10 @@ __all__ = [
     "HeapId",
     "HeapNode",
     "HeapOverflowError",
+    "PropertyContext",
+    "PropertyContextEntry",
+    "PropertyContextImage",
+    "PropertyType",
     "MAX_HEAP_ALLOCATION",
     "NbtEntry",
     "NdbBuildResult",
