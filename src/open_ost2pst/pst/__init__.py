@@ -1,5 +1,14 @@
 """PST writing, NDB primitives, and validation."""
 
+from .amap import (
+    AMAP_FIRST_OFFSET,
+    AMAP_SPAN,
+    AmapAllocator,
+    AmapBlockOffsetAllocator,
+    AmapImage,
+    AmapPageAllocator,
+    pack_amap_page,
+)
 from .blocks import (
     BlockOffsetAllocator,
     BlockTrailer,
@@ -22,6 +31,12 @@ from .primitives import BRef, NidType
 from .writer import PstWriter
 
 __all__ = [
+    "AMAP_FIRST_OFFSET",
+    "AMAP_SPAN",
+    "AmapAllocator",
+    "AmapBlockOffsetAllocator",
+    "AmapImage",
+    "AmapPageAllocator",
     "BRef",
     "BbtEntry",
     "BTreeResult",
@@ -41,6 +56,7 @@ __all__ = [
     "UnicodeHeader",
     "build_bbt",
     "build_nbt",
+    "pack_amap_page",
     "pack_data_block",
     "parse_block_trailer",
 ]
