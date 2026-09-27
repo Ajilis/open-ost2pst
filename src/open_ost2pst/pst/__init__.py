@@ -1,5 +1,13 @@
 """PST writing, NDB primitives, and validation."""
 
+from .blocks import (
+    BlockOffsetAllocator,
+    BlockTrailer,
+    DataBlockImage,
+    DataBlockStore,
+    pack_data_block,
+    parse_block_trailer,
+)
 from .btree import (
     BbtEntry,
     BTreeResult,
@@ -17,7 +25,11 @@ __all__ = [
     "BRef",
     "BbtEntry",
     "BTreeResult",
+    "BlockOffsetAllocator",
+    "BlockTrailer",
     "BtEntry",
+    "DataBlockImage",
+    "DataBlockStore",
     "NbtEntry",
     "NidType",
     "PageAllocator",
@@ -29,4 +41,6 @@ __all__ = [
     "UnicodeHeader",
     "build_bbt",
     "build_nbt",
+    "pack_data_block",
+    "parse_block_trailer",
 ]
