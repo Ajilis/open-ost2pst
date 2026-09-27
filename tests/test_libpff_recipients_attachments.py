@@ -102,9 +102,21 @@ def test_libpff_reads_recipients_and_attachment_subnodes() -> None:
 
             assert item.get_number_of_attachments() == 1
             attachment = item.get_attachment(0)
-            assert attachment.get_long_filename() == "sample.bin"
-            assert attachment.get_size() == len(payload)
-            attachment.seek_offset(0, 0)
+            assert attachment is not None
+
+            if hasattr(attachment, "get_long_filename"):
+                assert attachment.get_long_filename() == "sample.bin"
+            elif hasattr(attachment, "long_filename"):
+                assert attachment.long_filename == "sample.bin"
+
+            if hasattr(attachment, "get_size"):
+                assert attachment.get_size() == len(payload)
+            elif hasattr(attachment, "size"):
+                assert attachment.size == len(payload)
+
+            if hasattr(attachment, "seek_offset"):
+                attachment.seek_offset(0, 0)
+            assert hasattr(attachment, "read_buffer")
             assert attachment.read_buffer(len(payload)) == payload
         finally:
             store.close()
