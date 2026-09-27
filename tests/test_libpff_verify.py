@@ -65,12 +65,16 @@ def test_verify_matches_converted_pst_with_source() -> None:
 
         assert report.ok is True
         assert report.mismatch_count == 0
-        assert report.destination_manifest.folder_count == 2
+        assert report.destination_manifest.folder_count == 3
         assert report.destination_manifest.message_count == 1
         assert report.destination_manifest.attachment_count == 1
 
         attachment = (
-            report.destination_manifest.folders[1]
+            next(
+                folder
+                for folder in report.destination_manifest.folders
+                if folder.path.endswith("/Inbox")
+            )
             .messages[0]
             .attachments[0]
         )
