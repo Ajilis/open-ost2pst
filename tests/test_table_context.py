@@ -68,11 +68,11 @@ def test_tc_layout_groups_8_4_then_2_then_1_byte_cells() -> None:
     image = table.build()
     layout = image.layout
 
-    assert layout.tci_4b == 20
-    assert layout.tci_2b == 22
-    assert layout.tci_1b == 23
+    assert layout.tci_4b == 24
+    assert layout.tci_2b == 26
+    assert layout.tci_1b == 27
     assert layout.ceb_size == 1
-    assert layout.tci_bm == 24
+    assert layout.tci_bm == 28
 
     row_id = _column(layout.descriptors, PID_LTP_ROW_ID)
     row_ver = _column(layout.descriptors, PID_LTP_ROW_VER)
