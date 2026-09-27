@@ -70,7 +70,7 @@ open-ost2pst verify mailbox.pst --source mailbox.ost --report verify.json
 
 `verify` can validate a PST on its own or compare it against a source OST/PST. Source/destination comparison checks folder hierarchy and counts, message order/subjects/dates/read state, attachment counts/sizes, and SHA-256 hashes of attachment bytes. Verification exits non-zero when libpff extraction fails or mismatches are detected.
 
-Large variable properties, multi-block HN streams, large Row Matrices, zero-length binary values, and large attachments are supported through LTP subnodes plus XBLOCK/XXBLOCK data trees. RTF is extracted but not yet emitted. Very large subnode sets that require SIBLOCK and data trees deeper than XXBLOCK remain future work.
+Large variable properties, multi-block HN streams, large Row Matrices, zero-length binary values, and large attachments are supported through LTP subnodes plus XBLOCK/XXBLOCK data trees. Subnode BTrees automatically use SIBLOCK roots when more than 340 local subnodes are present, supporting up to 173,400 subnodes per local tree. RTF is extracted but not yet emitted. Data trees deeper than XXBLOCK remain future work.
 
 ## Project layout
 
