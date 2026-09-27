@@ -20,7 +20,14 @@ from .ltp.storage import ExternalValue
 from .ltp.tc import TableContext
 from .ndb import Root, UnicodeHeader, VALID_AMAP
 from .primitives import BlockBidAllocator, PageBidAllocator
-from .subnodes import SubnodeEntry, pack_slblock
+from .subnodes import (
+    SLBLOCK_MAX_ENTRIES,
+    SubnodeEntry,
+    SubnodeIntermediateEntry,
+    pack_siblock,
+    pack_slblock,
+    split_slblock_entries,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,8 +225,22 @@ class NdbImageBuilder:
                 )
             )
 
-        block = self.add_internal_block(pack_slblock(entries))
-        return block.bref.bid
+        if len(entries) <= SLBLOCK_MAX_ENTRIES:
+            block = self.add_internal_block(pack_slblock(entries))
+            return block.bref.bid
+
+        leaf_blocks: list[tuple[int, int]] = []
+        for group in split_slblock_entries(entries):
+            leaf = self.add_internal_block(pack_slblock(group))
+            leaf_blocks.append((group[0].nid, leaf.bref.bid))
+
+        root = self.add_internal_block(
+            pack_siblock(
+                SubnodeIntermediateEntry(nid=nid, bid=bid)
+                for nid, bid in leaf_blocks
+            )
+        )
+        return root.bref.bid
 
     def add_node(
         self,
