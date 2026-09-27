@@ -60,9 +60,12 @@ def test_mailbox_bridge_preserves_hierarchy_message_and_people() -> None:
     builder, report = mailbox_to_messaging(mailbox)
 
     assert builder.root.name == "Root"
-    assert len(builder.root.folders) == 1
+    assert len(builder.root.folders) == 2
 
-    inbox = builder.root.folders[0]
+    inbox = next(
+        folder for folder in builder.root.folders
+        if folder.name == "Inbox"
+    )
     assert inbox.name == "Inbox"
     assert len(inbox.messages) == 1
 
