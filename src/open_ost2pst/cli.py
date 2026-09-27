@@ -14,7 +14,7 @@ from open_ost2pst.reader.pff_reader import (
     inspect_store,
     load_mailbox,
 )
-from open_ost2pst.verification import verify_store
+from open_ost2pst.verification import verify_against_mailbox, verify_store
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -114,12 +114,23 @@ def _cmd_convert(
         print(f"error: PST writing failed: {exc}")
         return 5
 
+    try:
+        verification = verify_against_mailbox(
+            destination,
+            mailbox,
+            source_label=str(source),
+        )
+    except Exception as exc:
+        print(f"error: PST was written but automatic verification failed: {exc}")
+        return 6
+
     if report_path is not None:
         payload = {
             "source": str(source),
             "destination": str(destination),
             "extraction": extraction.to_dict(),
             "writing": writing.to_dict(),
+            "verification": verification.to_dict(),
         }
         try:
             report_path.write_text(
@@ -138,6 +149,15 @@ def _cmd_convert(
         f"{writing.messages_written} messages, "
         f"{writing.attachments_written} attachments"
     )
+
+    if not verification.ok:
+        print(
+            f"error: automatic verification found "
+            f"{verification.mismatch_count} mismatch(es)"
+        )
+        return 6
+
+    print("Verification OK")
     return 0
 
 
