@@ -41,7 +41,7 @@ jobs:
           .venv-libpff/bin/python -m pip install -e ".[dev]"
 
       - name: Validate generated PST with libpff
-        run: .venv-libpff/bin/python -m pytest -q tests/test_libpff_ndb.py tests/test_libpff_pc.py tests/test_libpff_tc.py tests/test_libpff_messaging.py tests/test_libpff_recipients_attachments.py tests/test_libpff_convert.py tests/test_libpff_large_data.py tests/test_libpff_verify.py tests/test_libpff_siblock.py
+        run: .venv-libpff/bin/python -m pytest -q tests/test_libpff_ndb.py tests/test_libpff_pc.py tests/test_libpff_tc.py tests/test_libpff_messaging.py tests/test_libpff_recipients_attachments.py tests/test_libpff_convert.py tests/test_libpff_large_data.py tests/test_libpff_verify.py tests/test_libpff_siblock.py tests/test_libpff_rtf.py
 
   windows-harness:
     runs-on: windows-latest
