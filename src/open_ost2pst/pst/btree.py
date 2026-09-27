@@ -15,6 +15,7 @@ from .pages import (
 )
 from .primitives import (
     BID_RESERVED,
+    BLOCK_MAX_PAYLOAD,
     BRef,
     PageBidAllocator,
     UINT32_MAX,
@@ -25,7 +26,7 @@ from .primitives import (
 BT_ENTRY_SIZE = 24
 NBT_LEAF_ENTRY_SIZE = 32
 BBT_LEAF_ENTRY_SIZE = 24
-MAX_BLOCK_PAYLOAD = 8176
+MAX_BLOCK_PAYLOAD = BLOCK_MAX_PAYLOAD
 
 
 class _LeafEntry(Protocol):
