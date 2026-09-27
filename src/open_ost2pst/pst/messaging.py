@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from .image import NdbBuildResult, NdbImageBuilder
 from .nameid import NameIdMap
-from .ltp.pc import PropertyContext
+from .ltp.pc import PropertyContext, PropertyType
 from .ltp.tc import TableContext
 from .primitives import NidType, make_nid, nid_index
 from .rtf import compress_rtf
@@ -91,6 +91,9 @@ class MessagingMessage:
     is_read: bool = True
     recipients: list[MessagingRecipient] = field(default_factory=list)
     attachments: list[MessagingAttachment] = field(default_factory=list)
+    named_properties: dict[int, tuple[PropertyType, object]] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(slots=True)
@@ -209,6 +212,32 @@ class MessagingBuilder:
         )
         folder.messages.append(message)
         return message
+
+    def set_named_property(
+        self,
+        message: MessagingMessage,
+        identifier: str | int,
+        value: object,
+        *,
+        property_type: int | PropertyType,
+        guid=None,
+    ) -> int:
+        ptype = PropertyType(int(property_type))
+        if isinstance(identifier, str):
+            property_id = self.nameid.register_string(
+                identifier,
+                guid=guid,
+            )
+        elif isinstance(identifier, int):
+            property_id = self.nameid.register_numeric(
+                identifier,
+                guid=guid,
+            )
+        else:
+            raise TypeError("named property identifier must be str or int")
+
+        message.named_properties[property_id] = (ptype, value)
+        return property_id
 
     def add_recipient(
         self,
@@ -542,6 +571,9 @@ def _build_message_pc(message: MessagingMessage) -> PropertyContext:
     if message.creation_filetime is not None:
         pc.set_filetime(PR_CREATION_TIME, message.creation_filetime)
 
+    for property_id, (property_type, value) in message.named_properties.items():
+        _set_pc_property(pc, property_id, property_type, value)
+
     return pc
 
 
@@ -556,6 +588,40 @@ def _build_attachment_pc(attachment: MessagingAttachment) -> PropertyContext:
     if attachment.mime_type:
         pc.set_unicode(PR_ATTACH_MIME_TAG, attachment.mime_type)
     return pc
+
+
+def _set_pc_property(
+    pc: PropertyContext,
+    property_id: int,
+    property_type: PropertyType,
+    value: object,
+) -> None:
+    if property_type == PropertyType.INTEGER16:
+        pc.set_integer16(property_id, int(value))
+    elif property_type == PropertyType.INTEGER32:
+        pc.set_integer32(property_id, int(value))
+    elif property_type == PropertyType.FLOAT32:
+        pc.set_float32(property_id, float(value))
+    elif property_type == PropertyType.FLOAT64:
+        pc.set_float64(property_id, float(value))
+    elif property_type == PropertyType.BOOLEAN:
+        pc.set_boolean(property_id, bool(value))
+    elif property_type == PropertyType.INTEGER64:
+        pc.set_integer64(property_id, int(value))
+    elif property_type == PropertyType.SYSTIME:
+        pc.set_filetime(property_id, int(value))
+    elif property_type == PropertyType.UNICODE:
+        pc.set_unicode(property_id, str(value))
+    elif property_type == PropertyType.STRING8:
+        pc.set_string8(property_id, str(value))
+    elif property_type == PropertyType.BINARY:
+        pc.set_binary(property_id, bytes(value))
+    elif property_type == PropertyType.GUID:
+        pc.set_guid(property_id, bytes(value))
+    else:
+        raise ValueError(
+            f"unsupported named property type: {int(property_type):#x}"
+        )
 
 
 def _unread_count(folder: MessagingFolder) -> int:
