@@ -171,29 +171,18 @@ class AmapAllocator:
         if size <= 0 or size % AMAP_ALLOCATION_UNIT:
             raise ValueError("size must be a positive multiple of 64 bytes")
 
-        remaining = size
-        cursor = ib
-        while remaining:
-            amap_ib = self._amap_base_for(cursor)
-            self._ensure_amap_chain(amap_ib)
-            span_end = amap_ib + AMAP_SPAN
-            chunk = min(remaining, span_end - cursor)
-            if chunk <= 0:
-                raise ValueError("allocation cannot overlap an AMap boundary")
+        start_amap = self._amap_base_for(ib)
+        end_amap = self._amap_base_for(ib + size - 1)
+        if start_amap != end_amap:
+            raise ValueError("one allocation cannot cross an AMap boundary")
 
-            start_slot = (cursor - amap_ib) // AMAP_ALLOCATION_UNIT
-            slot_count = chunk // AMAP_ALLOCATION_UNIT
-            if start_slot + slot_count > AMAP_BITS:
-                raise ValueError("allocation exceeds AMap coverage")
+        self._ensure_amap_chain(start_amap)
+        start_slot = (ib - start_amap) // AMAP_ALLOCATION_UNIT
+        slot_count = size // AMAP_ALLOCATION_UNIT
+        if start_slot + slot_count > AMAP_BITS:
+            raise ValueError("allocation exceeds AMap coverage")
 
-            self._set_slots(self._bitmaps[amap_ib], start_slot, slot_count)
-            cursor += chunk
-            remaining -= chunk
-
-            if remaining:
-                # The next AMap owns its first page. User allocations cannot
-                # continue through that page, so crossing extents are invalid.
-                raise ValueError("one allocation cannot cross an AMap boundary")
+        self._set_slots(self._bitmaps[start_amap], start_slot, slot_count)
 
     def page_allocator(self) -> "AmapPageAllocator":
         return AmapPageAllocator(self)
