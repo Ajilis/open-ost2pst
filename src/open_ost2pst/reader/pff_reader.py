@@ -1,10 +1,30 @@
-"""Read-only OST/PST inspection through libpff's Python bindings."""
+"""Read-only OST/PST inspection and extraction through libpff."""
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from email.utils import parseaddr
+import mimetypes
 from pathlib import Path
 from typing import Any
+
+from open_ost2pst.model import Attachment, Folder, Mailbox, Message, Recipient
+
+# Common MAPI property IDs used by Outlook message/recipient/attachment rows.
+PR_DISPLAY_NAME = 0x3001
+PR_EMAIL_ADDRESS = 0x3003
+PR_RECIPIENT_TYPE = 0x0C15
+PR_SENDER_EMAIL_ADDRESS = 0x0C1F
+PR_MESSAGE_FLAGS = 0x0E07
+PR_ATTACH_FILENAME = 0x3704
+PR_ATTACH_LONG_FILENAME = 0x3707
+PR_ATTACH_MIME_TAG = 0x370E
+PR_SMTP_ADDRESS = 0x39FE
+PR_SENDER_SMTP_ADDRESS = 0x5D01
+
+MESSAGE_FLAG_READ = 0x00000001
+RECIPIENT_TYPES = {1: "to", 2: "cc", 3: "bcc"}
 
 
 class PffUnavailableError(RuntimeError):
@@ -22,6 +42,31 @@ class InspectionStats:
         return asdict(self)
 
 
+@dataclass(slots=True)
+class ExtractionReport:
+    """Best-effort extraction counters and non-fatal warnings."""
+
+    path: str
+    folders_seen: int = 0
+    folders_loaded: int = 0
+    folders_failed: int = 0
+    messages_seen: int = 0
+    messages_loaded: int = 0
+    messages_failed: int = 0
+    attachments_seen: int = 0
+    attachments_loaded: int = 0
+    attachments_failed: int = 0
+    warnings: list[str] = field(default_factory=list)
+
+    def warn(self, message: str) -> None:
+        # Keep reports bounded for heavily damaged stores.
+        if len(self.warnings) < 100:
+            self.warnings.append(message)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 def _load_pypff() -> Any:
     try:
         import pypff  # type: ignore
@@ -33,14 +78,290 @@ def _load_pypff() -> Any:
     return pypff
 
 
+def _safe_attr(obj: Any, name: str, default: Any = None) -> Any:
+    try:
+        value = getattr(obj, name, default)
+        return value() if callable(value) else value
+    except Exception:
+        return default
+
+
 def _int_attr(obj: Any, name: str) -> int:
-    value = getattr(obj, name, 0)
-    if callable(value):
-        value = value()
+    value = _safe_attr(obj, name, 0)
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _record_set(obj: Any) -> Any | None:
+    """Return a record set for a pypff item or an existing record set."""
+
+    if obj is None:
+        return None
+
+    if hasattr(obj, "get_entry_by_type"):
+        return obj
+
+    try:
+        return obj.get_record_set(0)
+    except Exception:
+        return None
+
+
+def _entry(obj: Any, property_id: int) -> Any | None:
+    record_set = _record_set(obj)
+    if record_set is None:
+        return None
+
+    try:
+        return record_set.get_entry_by_type(property_id)
+    except Exception:
+        return None
+
+
+def _property_string(obj: Any, property_id: int) -> str | None:
+    entry = _entry(obj, property_id)
+    if entry is None:
+        return None
+
+    value = _safe_attr(entry, "data_as_string")
+    if value is None:
+        try:
+            value = entry.get_data_as_string()
+        except Exception:
+            return None
+
+    return str(value) if value is not None else None
+
+
+def _property_integer(obj: Any, property_id: int) -> int | None:
+    entry = _entry(obj, property_id)
+    if entry is None:
+        return None
+
+    value = _safe_attr(entry, "data_as_integer")
+    if value is None:
+        try:
+            value = entry.get_data_as_integer()
+        except Exception:
+            return None
+
     try:
         return int(value)
     except (TypeError, ValueError):
-        return 0
+        return None
+
+
+def _decode_body(value: Any) -> str | None:
+    """Decode pypff body bytes without failing the whole message."""
+
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, (bytes, bytearray, memoryview)):
+        return str(value)
+
+    data = bytes(value)
+    if not data:
+        return ""
+
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        try:
+            return data.decode("utf-16")
+        except UnicodeDecodeError:
+            pass
+
+    if data.startswith(b"\xef\xbb\xbf"):
+        try:
+            return data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            pass
+
+    # UTF-16 data without a BOM usually contains many NUL bytes.
+    if len(data) >= 4 and data.count(b"\x00") > len(data) // 4:
+        for encoding in ("utf-16-le", "utf-16-be"):
+            try:
+                return data.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("cp1252", errors="replace")
+
+
+def _datetime_attr(obj: Any, name: str) -> datetime | None:
+    value = _safe_attr(obj, name)
+    return value if isinstance(value, datetime) else None
+
+
+def _sender_email(message: Any) -> str | None:
+    for property_id in (PR_SENDER_SMTP_ADDRESS, PR_SENDER_EMAIL_ADDRESS):
+        value = _property_string(message, property_id)
+        if value:
+            return value
+
+    headers = _safe_attr(message, "transport_headers")
+    if headers:
+        try:
+            for line in str(headers).splitlines():
+                if line.lower().startswith("from:"):
+                    _name, address = parseaddr(line[5:].strip())
+                    if address:
+                        return address
+        except Exception:
+            pass
+
+    return None
+
+
+def _extract_recipients(message: Any) -> list[Recipient]:
+    recipients_item = _safe_attr(message, "recipients")
+    if recipients_item is None:
+        return []
+
+    recipients: list[Recipient] = []
+    count = _int_attr(recipients_item, "number_of_recipients")
+
+    for index in range(count):
+        try:
+            row = recipients_item.get_recipient(index)
+        except Exception:
+            continue
+
+        recipient_type = _property_integer(row, PR_RECIPIENT_TYPE)
+        address = (
+            _property_string(row, PR_SMTP_ADDRESS)
+            or _property_string(row, PR_EMAIL_ADDRESS)
+        )
+
+        recipients.append(
+            Recipient(
+                name=_property_string(row, PR_DISPLAY_NAME),
+                email=address,
+                recipient_type=RECIPIENT_TYPES.get(recipient_type, "unknown"),
+            )
+        )
+
+    return recipients
+
+
+def _attachment_data(attachment: Any) -> bytes:
+    size = _int_attr(attachment, "size")
+    if size == 0:
+        return b""
+
+    try:
+        attachment.seek_offset(0, 0)
+    except Exception:
+        pass
+
+    chunks: list[bytes] = []
+    remaining = size
+    chunk_size = 1024 * 1024
+
+    while remaining > 0:
+        request_size = min(chunk_size, remaining)
+        data = attachment.read_buffer(request_size)
+        if not data:
+            break
+
+        chunk = bytes(data)
+        chunks.append(chunk)
+        remaining -= len(chunk)
+
+        if len(chunk) < request_size:
+            break
+
+    return b"".join(chunks)
+
+
+def _extract_attachment(attachment: Any) -> Attachment:
+    filename = _safe_attr(attachment, "long_filename")
+    if not filename:
+        filename = (
+            _property_string(attachment, PR_ATTACH_LONG_FILENAME)
+            or _property_string(attachment, PR_ATTACH_FILENAME)
+        )
+
+    mime_type = _property_string(attachment, PR_ATTACH_MIME_TAG)
+    if not mime_type and filename:
+        mime_type = mimetypes.guess_type(str(filename))[0]
+
+    return Attachment(
+        filename=str(filename) if filename else None,
+        data=_attachment_data(attachment),
+        mime_type=mime_type,
+    )
+
+
+def _extract_message(message: Any, report: ExtractionReport) -> Message:
+    flags = _property_integer(message, PR_MESSAGE_FLAGS)
+
+    result = Message(
+        subject=_safe_attr(message, "subject"),
+        sender_name=_safe_attr(message, "sender_name"),
+        sender_email=_sender_email(message),
+        body_text=_decode_body(_safe_attr(message, "plain_text_body")),
+        body_html=_decode_body(_safe_attr(message, "html_body")),
+        body_rtf=_safe_attr(message, "rtf_body"),
+        delivery_time=_datetime_attr(message, "delivery_time"),
+        creation_time=_datetime_attr(message, "creation_time"),
+        is_read=bool(flags & MESSAGE_FLAG_READ) if flags is not None else None,
+        recipients=_extract_recipients(message),
+    )
+
+    attachment_count = _int_attr(message, "number_of_attachments")
+    report.attachments_seen += attachment_count
+
+    for index in range(attachment_count):
+        try:
+            attachment = message.get_attachment(index)
+            result.attachments.append(_extract_attachment(attachment))
+            report.attachments_loaded += 1
+        except Exception as exc:
+            report.attachments_failed += 1
+            report.warn(f"attachment {index} failed in message {result.subject!r}: {exc}")
+
+    return result
+
+
+def _extract_folder(folder: Any, report: ExtractionReport, fallback_name: str) -> Folder:
+    report.folders_seen += 1
+    name = _safe_attr(folder, "name") or fallback_name
+    result = Folder(name=str(name))
+    report.folders_loaded += 1
+
+    message_count = _int_attr(folder, "number_of_sub_messages")
+    report.messages_seen += message_count
+
+    for index in range(message_count):
+        try:
+            message = folder.get_sub_message(index)
+            result.messages.append(_extract_message(message, report))
+            report.messages_loaded += 1
+        except Exception as exc:
+            report.messages_failed += 1
+            report.warn(f"message {index} failed in folder {result.name!r}: {exc}")
+
+    child_count = _int_attr(folder, "number_of_sub_folders")
+    for index in range(child_count):
+        try:
+            child = folder.get_sub_folder(index)
+        except Exception as exc:
+            report.folders_seen += 1
+            report.folders_failed += 1
+            report.warn(f"subfolder {index} failed in folder {result.name!r}: {exc}")
+            continue
+
+        result.folders.append(
+            _extract_folder(child, report, fallback_name=f"Folder {index + 1}")
+        )
+
+    return result
 
 
 def _walk_folder(folder: Any, stats: InspectionStats) -> None:
@@ -54,8 +375,6 @@ def _walk_folder(folder: Any, stats: InspectionStats) -> None:
             message = folder.get_sub_message(index)
             stats.attachments += _int_attr(message, "number_of_attachments")
         except Exception:
-            # Inspection is deliberately best-effort so one damaged item does
-            # not make the whole OST unreadable.
             continue
 
     child_count = _int_attr(folder, "number_of_sub_folders")
@@ -68,11 +387,7 @@ def _walk_folder(folder: Any, stats: InspectionStats) -> None:
 
 
 def inspect_store(path: str | Path) -> InspectionStats:
-    """Inspect an OST/PST without modifying it.
-
-    Returns aggregate folder/message/attachment counts. Damaged individual
-    items are skipped where libpff can continue traversing the store.
-    """
+    """Inspect an OST/PST without modifying it."""
 
     source = Path(path)
     if not source.is_file():
@@ -80,7 +395,6 @@ def inspect_store(path: str | Path) -> InspectionStats:
 
     pypff = _load_pypff()
     store = pypff.file()
-
     stats = InspectionStats(path=str(source))
 
     try:
@@ -94,3 +408,34 @@ def inspect_store(path: str | Path) -> InspectionStats:
             pass
 
     return stats
+
+
+def load_mailbox(path: str | Path) -> tuple[Mailbox, ExtractionReport]:
+    """Load an OST/PST into the format-neutral mailbox model.
+
+    Extraction is best-effort: corrupt messages, folders, or attachments are
+    recorded in the report and skipped where possible. The source file is
+    always opened read-only by libpff and is never modified.
+    """
+
+    source = Path(path)
+    if not source.is_file():
+        raise FileNotFoundError(source)
+
+    pypff = _load_pypff()
+    store = pypff.file()
+    report = ExtractionReport(path=str(source))
+
+    try:
+        store.open(str(source))
+        root = store.get_root_folder()
+        mailbox = Mailbox(
+            root=_extract_folder(root, report, fallback_name="Root")
+        )
+    finally:
+        try:
+            store.close()
+        except Exception:
+            pass
+
+    return mailbox, report
