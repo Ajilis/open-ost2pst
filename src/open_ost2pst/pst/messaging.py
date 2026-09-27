@@ -33,6 +33,7 @@ PR_HTML = 0x1013
 PR_DISPLAY_NAME = 0x3001
 PR_ADDRTYPE = 0x3002
 PR_EMAIL_ADDRESS = 0x3003
+PR_CREATION_TIME = 0x3007
 PR_STORE_SUPPORT_MASK = 0x340D
 PR_CONTENT_COUNT = 0x3602
 PR_CONTENT_UNREAD = 0x3603
@@ -78,6 +79,7 @@ class MessagingMessage:
     html_body: bytes | None = None
     delivery_filetime: int | None = None
     client_submit_filetime: int | None = None
+    creation_filetime: int | None = None
     is_read: bool = True
     recipients: list[MessagingRecipient] = field(default_factory=list)
     attachments: list[MessagingAttachment] = field(default_factory=list)
@@ -146,6 +148,7 @@ class MessagingBuilder:
         html_body: bytes | None = None,
         delivery_filetime: int | None = None,
         client_submit_filetime: int | None = None,
+        creation_filetime: int | None = None,
         is_read: bool = True,
     ) -> MessagingMessage:
         nid = make_nid(NidType.NORMAL_MESSAGE, self._next_message_index)
@@ -162,6 +165,7 @@ class MessagingBuilder:
             html_body=html_body,
             delivery_filetime=delivery_filetime,
             client_submit_filetime=client_submit_filetime,
+            creation_filetime=creation_filetime,
             is_read=is_read,
         )
         folder.messages.append(message)
@@ -412,6 +416,8 @@ def _build_message_pc(message: MessagingMessage) -> PropertyContext:
         pc.set_filetime(PR_MESSAGE_DELIVERY_TIME, message.delivery_filetime)
     if message.client_submit_filetime is not None:
         pc.set_filetime(PR_CLIENT_SUBMIT_TIME, message.client_submit_filetime)
+    if message.creation_filetime is not None:
+        pc.set_filetime(PR_CREATION_TIME, message.creation_filetime)
 
     return pc
 
