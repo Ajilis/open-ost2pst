@@ -25,6 +25,7 @@ from .btree import (
     build_bbt,
     build_nbt,
 )
+from .image import NdbBuildResult, NdbImageBuilder, build_minimal_ndb
 from .ndb import Root, UnicodeHeader
 from .pages import PageAllocator, PageImage, PageTrailer, PageType
 from .primitives import BRef, NidType
@@ -46,6 +47,8 @@ __all__ = [
     "DataBlockImage",
     "DataBlockStore",
     "NbtEntry",
+    "NdbBuildResult",
+    "NdbImageBuilder",
     "NidType",
     "PageAllocator",
     "PageImage",
@@ -55,6 +58,7 @@ __all__ = [
     "Root",
     "UnicodeHeader",
     "build_bbt",
+    "build_minimal_ndb",
     "build_nbt",
     "pack_amap_page",
     "pack_data_block",
