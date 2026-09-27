@@ -2,6 +2,8 @@ import tempfile
 
 import pytest
 
+from tests._libpff_helpers import get_child_by_name, get_ipm_subtree
+
 from open_ost2pst.pst.messaging import (
     PR_DISPLAY_NAME,
     PR_EMAIL_ADDRESS,
@@ -68,8 +70,8 @@ def test_libpff_reads_recipients_and_attachment_subnodes() -> None:
         store = pypff.file()
         store.open(handle.name)
         try:
-            root = store.get_root_folder()
-            inbox_item = root.get_sub_folder(0)
+            root = get_ipm_subtree(store)
+            inbox_item = get_child_by_name(root, "Inbox")
             item = inbox_item.get_sub_message(0)
 
             # Ubuntu 24.04 currently ships pypff 20180714, whose message
