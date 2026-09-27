@@ -303,7 +303,7 @@ def test_bth_can_span_multiple_hn_blocks() -> None:
             index.to_bytes(2, "little"),
             (index * 7).to_bytes(6, "little"),
         )
-        for index in range(1000)
+        for index in range(1500)
     ]
 
     result = build_bth(
