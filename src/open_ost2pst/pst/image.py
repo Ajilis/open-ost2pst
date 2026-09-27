@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from .primitives import BlockBidAllocator, PageBidAllocator
 from .ltp.heap import HeapNode
 from .ltp.pc import PropertyContext
 from .ltp.tc import TableContext
+from .subnodes import SubnodeEntry, pack_slblock
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,8 +76,77 @@ class NdbImageBuilder:
         payload: bytes | bytearray | memoryview,
         *,
         c_ref: int = 1,
+        internal: bool = False,
     ) -> DataBlockImage:
-        return self._blocks.add(payload, c_ref=c_ref)
+        return self._blocks.add(
+            payload,
+            c_ref=c_ref,
+            internal=internal,
+        )
+
+    def add_internal_block(
+        self,
+        payload: bytes | bytearray | memoryview,
+        *,
+        c_ref: int = 1,
+    ) -> DataBlockImage:
+        return self._blocks.add_internal(payload, c_ref=c_ref)
+
+    def store_property_context(
+        self,
+        context: PropertyContext,
+        *,
+        c_ref: int = 1,
+    ) -> int:
+        image = context.build()
+        if len(image.heap.blocks) != 1:
+            raise ValueError(
+                "multi-block Property Context requires XBLOCK/XXBLOCK support"
+            )
+        return self.add_block(
+            image.heap.blocks[0].data,
+            c_ref=c_ref,
+        ).bref.bid
+
+    def store_table_context(
+        self,
+        context: TableContext,
+        *,
+        c_ref: int = 1,
+    ) -> int:
+        image = context.build()
+        if len(image.heap.blocks) != 1:
+            raise ValueError(
+                "multi-block Table Context requires XBLOCK/XXBLOCK support"
+            )
+        return self.add_block(
+            image.heap.blocks[0].data,
+            c_ref=c_ref,
+        ).bref.bid
+
+    def add_subnode_tree(
+        self,
+        subnodes: Mapping[int, object],
+    ) -> int:
+        entries: list[SubnodeEntry] = []
+        for nid in sorted(subnodes):
+            value = subnodes[nid]
+            if isinstance(value, tuple):
+                data_bid, nested = value
+                sub_bid = self.add_subnode_tree(nested) if nested else 0
+            else:
+                data_bid = value
+                sub_bid = 0
+            entries.append(
+                SubnodeEntry(
+                    nid=nid,
+                    data_bid=int(data_bid),
+                    sub_bid=sub_bid,
+                )
+            )
+
+        block = self.add_internal_block(pack_slblock(entries))
+        return block.bref.bid
 
     def add_node(
         self,
