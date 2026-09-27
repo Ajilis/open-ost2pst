@@ -3,6 +3,7 @@ import tempfile
 import pytest
 
 from open_ost2pst.pst.messaging import MessagingBuilder
+from tests._libpff_helpers import get_child_by_name, get_ipm_subtree
 
 
 pypff = pytest.importorskip("pypff")
@@ -47,8 +48,8 @@ def test_libpff_reads_large_body_attachment_and_external_contents_matrix() -> No
         store = pypff.file()
         store.open(handle.name)
         try:
-            root = store.get_root_folder()
-            inbox_item = root.get_sub_folder(0)
+            root = get_ipm_subtree(store)
+            inbox_item = get_child_by_name(root, "Inbox")
 
             assert inbox_item.get_number_of_sub_messages() == 351
 
