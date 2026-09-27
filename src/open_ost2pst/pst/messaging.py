@@ -8,7 +8,7 @@ from .image import NdbBuildResult, NdbImageBuilder
 from .ltp.pc import PropertyContext
 from .ltp.tc import TableContext
 from .primitives import NidType, make_nid, nid_index
-from .rtf import wrap_rtf_uncompressed
+from .rtf import compress_rtf
 
 
 NID_MESSAGE_STORE = 0x0021
@@ -420,7 +420,7 @@ def _build_message_pc(message: MessagingMessage) -> PropertyContext:
     if message.rtf_body is not None:
         pc.set_binary(
             PR_RTF_COMPRESSED,
-            wrap_rtf_uncompressed(message.rtf_body),
+            compress_rtf(message.rtf_body),
         )
     if message.delivery_filetime is not None:
         pc.set_filetime(PR_MESSAGE_DELIVERY_TIME, message.delivery_filetime)
