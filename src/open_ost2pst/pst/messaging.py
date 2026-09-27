@@ -1,4 +1,4 @@
-"""Minimal PST Messaging layer built on top of NDB + LTP."""
+"""PST Messaging layer built on top of NDB + LTP."""
 
 from __future__ import annotations
 
@@ -12,27 +12,58 @@ from .primitives import NidType, make_nid, nid_index
 
 NID_MESSAGE_STORE = 0x0021
 NID_ROOT_FOLDER = 0x0122
+NID_ATTACHMENT_TABLE = 0x0671
+NID_RECIPIENT_TABLE = 0x0692
 
 PR_MESSAGE_CLASS = 0x001A
 PR_SUBJECT = 0x0037
 PR_CLIENT_SUBMIT_TIME = 0x0039
 PR_SENDER_NAME = 0x0C1A
+PR_RECIPIENT_TYPE = 0x0C15
 PR_SENDER_EMAIL_ADDRESS = 0x0C1F
 PR_DISPLAY_CC = 0x0E03
 PR_DISPLAY_TO = 0x0E04
 PR_MESSAGE_DELIVERY_TIME = 0x0E06
 PR_MESSAGE_FLAGS = 0x0E07
 PR_HAS_ATTACH = 0x0E1B
+PR_ATTACH_SIZE = 0x0E20
 PR_BODY = 0x1000
 PR_HTML = 0x1013
 
 PR_DISPLAY_NAME = 0x3001
+PR_ADDRTYPE = 0x3002
+PR_EMAIL_ADDRESS = 0x3003
 PR_STORE_SUPPORT_MASK = 0x340D
 PR_CONTENT_COUNT = 0x3602
 PR_CONTENT_UNREAD = 0x3603
 PR_SUBFOLDERS = 0x360A
+PR_ATTACH_DATA = 0x3701
+PR_ATTACH_FILENAME = 0x3704
+PR_ATTACH_METHOD = 0x3705
+PR_ATTACH_LONG_FILENAME = 0x3707
+PR_ATTACH_MIME_TAG = 0x370E
+PR_SMTP_ADDRESS = 0x39FE
 
 MSGFLAG_READ = 0x00000001
+ATTACH_BY_VALUE = 1
+
+RECIPIENT_TYPE_TO = 1
+RECIPIENT_TYPE_CC = 2
+RECIPIENT_TYPE_BCC = 3
+
+
+@dataclass(slots=True)
+class MessagingRecipient:
+    name: str = ""
+    email: str = ""
+    recipient_type: int = RECIPIENT_TYPE_TO
+
+
+@dataclass(slots=True)
+class MessagingAttachment:
+    filename: str
+    data: bytes
+    mime_type: str | None = None
 
 
 @dataclass(slots=True)
@@ -48,6 +79,8 @@ class MessagingMessage:
     delivery_filetime: int | None = None
     client_submit_filetime: int | None = None
     is_read: bool = True
+    recipients: list[MessagingRecipient] = field(default_factory=list)
+    attachments: list[MessagingAttachment] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -68,6 +101,7 @@ class MessagingBuildResult:
     root_folder_nid: int
     folder_count: int
     message_count: int
+    attachment_count: int
 
     @property
     def data(self) -> bytes:
@@ -75,7 +109,7 @@ class MessagingBuildResult:
 
 
 class MessagingBuilder:
-    """Build a browsable PST hierarchy with folders and simple IPM.Note messages."""
+    """Build a browsable PST hierarchy with folders and IPM.Note messages."""
 
     def __init__(
         self,
@@ -133,6 +167,45 @@ class MessagingBuilder:
         folder.messages.append(message)
         return message
 
+    def add_recipient(
+        self,
+        message: MessagingMessage,
+        *,
+        name: str = "",
+        email: str = "",
+        recipient_type: int = RECIPIENT_TYPE_TO,
+    ) -> MessagingRecipient:
+        if recipient_type not in (
+            RECIPIENT_TYPE_TO,
+            RECIPIENT_TYPE_CC,
+            RECIPIENT_TYPE_BCC,
+        ):
+            raise ValueError("recipient_type must be To, Cc, or Bcc")
+
+        recipient = MessagingRecipient(
+            name=name,
+            email=email,
+            recipient_type=recipient_type,
+        )
+        message.recipients.append(recipient)
+        return recipient
+
+    def add_attachment(
+        self,
+        message: MessagingMessage,
+        *,
+        filename: str,
+        data: bytes | bytearray | memoryview,
+        mime_type: str | None = None,
+    ) -> MessagingAttachment:
+        attachment = MessagingAttachment(
+            filename=filename,
+            data=bytes(data),
+            mime_type=mime_type,
+        )
+        message.attachments.append(attachment)
+        return attachment
+
     def build(self) -> MessagingBuildResult:
         ndb = NdbImageBuilder()
 
@@ -141,7 +214,7 @@ class MessagingBuilder:
         store_pc.set_integer32(PR_STORE_SUPPORT_MASK, 0)
         ndb.add_property_context(NID_MESSAGE_STORE, store_pc)
 
-        folder_count, message_count = self._emit_folder(
+        folder_count, message_count, attachment_count = self._emit_folder(
             ndb,
             self.root,
             parent_nid=self.root.nid,
@@ -152,6 +225,7 @@ class MessagingBuilder:
             root_folder_nid=self.root.nid,
             folder_count=folder_count,
             message_count=message_count,
+            attachment_count=attachment_count,
         )
 
     def _emit_folder(
@@ -160,7 +234,7 @@ class MessagingBuilder:
         folder: MessagingFolder,
         *,
         parent_nid: int,
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, int]:
         folder_pc = PropertyContext()
         folder_pc.set_unicode(PR_DISPLAY_NAME, folder.name)
         folder_pc.set_integer32(PR_CONTENT_COUNT, len(folder.messages))
@@ -172,43 +246,84 @@ class MessagingBuilder:
             parent_nid=parent_nid,
         )
 
-        hierarchy = _build_hierarchy_table(folder)
         ndb.add_table_context(
             make_nid(NidType.HIERARCHY_TABLE, folder.index),
-            hierarchy,
+            _build_hierarchy_table(folder),
         )
-
-        contents = _build_contents_table(folder)
         ndb.add_table_context(
             make_nid(NidType.CONTENTS_TABLE, folder.index),
-            contents,
+            _build_contents_table(folder),
         )
-
-        fai = TableContext()
         ndb.add_table_context(
             make_nid(NidType.ASSOC_CONTENTS_TABLE, folder.index),
-            fai,
+            TableContext(),
         )
 
+        attachment_count = 0
         for message in folder.messages:
-            ndb.add_property_context(
-                message.nid,
-                _build_message_pc(message),
-                parent_nid=folder.nid,
-            )
+            attachment_count += len(message.attachments)
+            self._emit_message(ndb, message, parent_nid=folder.nid)
 
         folder_count = 1
         message_count = len(folder.messages)
         for child in folder.folders:
-            child_folders, child_messages = self._emit_folder(
+            child_folders, child_messages, child_attachments = self._emit_folder(
                 ndb,
                 child,
                 parent_nid=folder.nid,
             )
             folder_count += child_folders
             message_count += child_messages
+            attachment_count += child_attachments
 
-        return folder_count, message_count
+        return folder_count, message_count, attachment_count
+
+    def _emit_message(
+        self,
+        ndb: NdbImageBuilder,
+        message: MessagingMessage,
+        *,
+        parent_nid: int,
+    ) -> None:
+        data_bid = ndb.store_property_context(_build_message_pc(message))
+        subnodes: dict[int, object] = {}
+
+        if message.recipients:
+            recipient_bid = ndb.store_table_context(
+                _build_recipient_table(message)
+            )
+            subnodes[NID_RECIPIENT_TABLE] = recipient_bid
+
+        if message.attachments:
+            attachment_table = TableContext()
+            attachment_table.add_column(PR_DISPLAY_NAME, 0x001F)
+            attachment_table.add_column(PR_ATTACH_SIZE, 0x0003)
+            attachment_table.add_column(PR_ATTACH_METHOD, 0x0003)
+
+            for index, attachment in enumerate(message.attachments):
+                local_nid = make_nid(NidType.ATTACHMENT, 0x20 + index)
+                attachment_pc = _build_attachment_pc(attachment)
+                attachment_bid = ndb.store_property_context(attachment_pc)
+                subnodes[local_nid] = attachment_bid
+                attachment_table.add_row(
+                    local_nid,
+                    {
+                        PR_DISPLAY_NAME: attachment.filename,
+                        PR_ATTACH_SIZE: len(attachment.data),
+                        PR_ATTACH_METHOD: ATTACH_BY_VALUE,
+                    },
+                )
+
+            table_bid = ndb.store_table_context(attachment_table)
+            subnodes[NID_ATTACHMENT_TABLE] = table_bid
+
+        sub_bid = ndb.add_subnode_tree(subnodes) if subnodes else 0
+        ndb.add_node(
+            message.nid,
+            data_bid,
+            sub_bid=sub_bid,
+            parent_nid=parent_nid,
+        )
 
 
 def _build_hierarchy_table(folder: MessagingFolder) -> TableContext:
@@ -235,10 +350,7 @@ def _build_contents_table(folder: MessagingFolder) -> TableContext:
     table = TableContext()
     table.add_column(PR_MESSAGE_FLAGS, 0x0003)
 
-    has_delivery = any(
-        message.delivery_filetime is not None for message in folder.messages
-    )
-    if has_delivery:
+    if any(message.delivery_filetime is not None for message in folder.messages):
         table.add_column(PR_MESSAGE_DELIVERY_TIME, 0x0040)
 
     for message in folder.messages:
@@ -251,6 +363,28 @@ def _build_contents_table(folder: MessagingFolder) -> TableContext:
     return table
 
 
+def _build_recipient_table(message: MessagingMessage) -> TableContext:
+    table = TableContext()
+    table.add_column(PR_RECIPIENT_TYPE, 0x0003)
+    table.add_column(PR_DISPLAY_NAME, 0x001F)
+    table.add_column(PR_ADDRTYPE, 0x001F)
+    table.add_column(PR_EMAIL_ADDRESS, 0x001F)
+    table.add_column(PR_SMTP_ADDRESS, 0x001F)
+
+    for row_id, recipient in enumerate(message.recipients, start=1):
+        table.add_row(
+            row_id,
+            {
+                PR_RECIPIENT_TYPE: recipient.recipient_type,
+                PR_DISPLAY_NAME: recipient.name,
+                PR_ADDRTYPE: "SMTP",
+                PR_EMAIL_ADDRESS: recipient.email,
+                PR_SMTP_ADDRESS: recipient.email,
+            },
+        )
+    return table
+
+
 def _build_message_pc(message: MessagingMessage) -> PropertyContext:
     pc = PropertyContext()
     pc.set_unicode(PR_MESSAGE_CLASS, "IPM.Note")
@@ -260,7 +394,7 @@ def _build_message_pc(message: MessagingMessage) -> PropertyContext:
         PR_MESSAGE_FLAGS,
         MSGFLAG_READ if message.is_read else 0,
     )
-    pc.set_boolean(PR_HAS_ATTACH, False)
+    pc.set_boolean(PR_HAS_ATTACH, bool(message.attachments))
 
     if message.sender_name:
         pc.set_unicode(PR_SENDER_NAME, message.sender_name)
@@ -277,6 +411,19 @@ def _build_message_pc(message: MessagingMessage) -> PropertyContext:
     if message.client_submit_filetime is not None:
         pc.set_filetime(PR_CLIENT_SUBMIT_TIME, message.client_submit_filetime)
 
+    return pc
+
+
+def _build_attachment_pc(attachment: MessagingAttachment) -> PropertyContext:
+    pc = PropertyContext()
+    pc.set_integer32(PR_ATTACH_METHOD, ATTACH_BY_VALUE)
+    pc.set_binary(PR_ATTACH_DATA, attachment.data)
+    pc.set_unicode(PR_ATTACH_LONG_FILENAME, attachment.filename)
+    pc.set_unicode(PR_ATTACH_FILENAME, attachment.filename)
+    pc.set_unicode(PR_DISPLAY_NAME, attachment.filename)
+    pc.set_integer32(PR_ATTACH_SIZE, len(attachment.data))
+    if attachment.mime_type:
+        pc.set_unicode(PR_ATTACH_MIME_TAG, attachment.mime_type)
     return pc
 
 

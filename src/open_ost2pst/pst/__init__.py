@@ -50,10 +50,12 @@ from .ltp import (
     build_bth,
 )
 from .messaging import (
+    MessagingAttachment,
     MessagingBuildResult,
     MessagingBuilder,
     MessagingFolder,
     MessagingMessage,
+    MessagingRecipient,
 )
 from .ndb import Root, UnicodeHeader
 from .pages import PageAllocator, PageImage, PageTrailer, PageType
@@ -95,10 +97,12 @@ __all__ = [
     "TableContextImage",
     "TableLayout",
     "MAX_HEAP_ALLOCATION",
+    "MessagingAttachment",
     "MessagingBuildResult",
     "MessagingBuilder",
     "MessagingFolder",
     "MessagingMessage",
+    "MessagingRecipient",
     "NbtEntry",
     "NdbBuildResult",
     "NdbImageBuilder",
