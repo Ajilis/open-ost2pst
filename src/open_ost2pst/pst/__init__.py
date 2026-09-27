@@ -69,6 +69,19 @@ from .messaging import (
 from .ndb import Root, UnicodeHeader
 from .pages import PageAllocator, PageImage, PageTrailer, PageType
 from .primitives import BRef, NidType
+from .subnodes import (
+    SIBLOCK_LEVEL_INTERMEDIATE,
+    SIBLOCK_MAX_ENTRIES,
+    SLBLOCK_LEVEL_LEAF,
+    SLBLOCK_MAX_ENTRIES,
+    SUBNODE_TREE_MAX_ENTRIES,
+    SubnodeEntry,
+    SubnodeIntermediateEntry,
+    pack_siblock,
+    pack_slblock,
+    parse_siblock,
+    parse_slblock,
+)
 from .writer import PstWriter
 
 __all__ = [
@@ -125,6 +138,13 @@ __all__ = [
     "PageType",
     "PstWriter",
     "Root",
+    "SIBLOCK_LEVEL_INTERMEDIATE",
+    "SIBLOCK_MAX_ENTRIES",
+    "SLBLOCK_LEVEL_LEAF",
+    "SLBLOCK_MAX_ENTRIES",
+    "SUBNODE_TREE_MAX_ENTRIES",
+    "SubnodeEntry",
+    "SubnodeIntermediateEntry",
     "UnicodeHeader",
     "XBLOCK_LEVEL",
     "XBLOCK_MAX_ENTRIES",
@@ -137,7 +157,11 @@ __all__ = [
     "mailbox_to_messaging",
     "pack_amap_page",
     "pack_data_block",
+    "pack_siblock",
+    "pack_slblock",
     "pack_xblock",
     "parse_xblock",
+    "parse_siblock",
+    "parse_slblock",
     "parse_block_trailer",
 ]
