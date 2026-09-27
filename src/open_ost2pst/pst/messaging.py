@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .image import NdbBuildResult, NdbImageBuilder
+from .nameid import NameIdMap
 from .ltp.pc import PropertyContext
 from .ltp.tc import TableContext
 from .primitives import NidType, make_nid, nid_index
@@ -13,6 +14,10 @@ from .rtf import compress_rtf
 
 NID_MESSAGE_STORE = 0x0021
 NID_ROOT_FOLDER = 0x0122
+NID_IPM_SUBTREE = 0x8022
+NID_SEARCH_ROOT = 0x8042
+NID_DELETED_ITEMS = 0x8062
+NID_SPAM_SEARCH_FOLDER = 0x2223
 NID_ATTACHMENT_TABLE = 0x0671
 NID_RECIPIENT_TABLE = 0x0692
 
@@ -107,6 +112,7 @@ class MessagingBuildResult:
     folder_count: int
     message_count: int
     attachment_count: int
+    ipm_subtree_nid: int
 
     @property
     def data(self) -> bytes:
@@ -123,8 +129,20 @@ class MessagingBuilder:
         root_name: str = "Top of Personal Folders",
     ) -> None:
         self.store_name = store_name
-        self.root = MessagingFolder(NID_ROOT_FOLDER, root_name)
-        self._next_folder_index = 0x400
+        self.nameid = NameIdMap()
+
+        # Keep the public root API pointed at the user-visible IPM subtree.
+        # The physical NID_ROOT_FOLDER is emitted separately during build().
+        self.root = MessagingFolder(NID_IPM_SUBTREE, root_name)
+        self.deleted_items = MessagingFolder(
+            NID_DELETED_ITEMS,
+            "Deleted Items",
+        )
+        self.root.folders.append(self.deleted_items)
+
+        # 0x401, 0x402 and 0x403 are reserved for the mandatory IPM,
+        # Search Root and Deleted Items folders.
+        self._next_folder_index = 0x404
         self._next_message_index = 0x10000
 
     def add_folder(
@@ -137,6 +155,22 @@ class MessagingBuilder:
         folder = MessagingFolder(nid=nid, name=name)
         parent.folders.append(folder)
         return folder
+
+    def register_named_string(
+        self,
+        name: str,
+        *,
+        guid=None,
+    ) -> int:
+        return self.nameid.register_string(name, guid=guid)
+
+    def register_named_numeric(
+        self,
+        lid: int,
+        *,
+        guid,
+    ) -> int:
+        return self.nameid.register_numeric(lid, guid=guid)
 
     def add_message(
         self,
@@ -223,18 +257,97 @@ class MessagingBuilder:
         store_pc.set_integer32(PR_STORE_SUPPORT_MASK, 0)
         ndb.add_property_context(NID_MESSAGE_STORE, store_pc)
 
+        # Every PST has exactly one Name-to-ID map. An empty map is still a
+        # valid PC with PidTagNameidBucketCount=251.
+        ndb.add_property_context(
+            0x0061,
+            self.nameid.build_property_context(),
+        )
+
+        self._emit_minimum_root(ndb)
+
         folder_count, message_count, attachment_count = self._emit_folder(
             ndb,
             self.root,
-            parent_nid=self.root.nid,
+            parent_nid=NID_ROOT_FOLDER,
+        )
+
+        # Search Root is a mandatory normal folder under the physical root.
+        search_root = MessagingFolder(NID_SEARCH_ROOT, "Search Root")
+        search_folders, search_messages, search_attachments = self._emit_folder(
+            ndb,
+            search_root,
+            parent_nid=NID_ROOT_FOLDER,
+        )
+
+        # The mandatory spam search folder is a search-folder PC referenced
+        # by the physical root hierarchy. No additional table nodes are
+        # required by the minimum-node set.
+        spam_pc = PropertyContext()
+        spam_pc.set_unicode(PR_DISPLAY_NAME, "SPAM Search Folder 2")
+        spam_pc.set_integer32(PR_CONTENT_COUNT, 0)
+        spam_pc.set_integer32(PR_CONTENT_UNREAD, 0)
+        spam_pc.set_boolean(PR_SUBFOLDERS, False)
+        ndb.add_property_context(
+            NID_SPAM_SEARCH_FOLDER,
+            spam_pc,
+            parent_nid=NID_ROOT_FOLDER,
         )
 
         return MessagingBuildResult(
             pst=ndb.build(),
-            root_folder_nid=self.root.nid,
-            folder_count=folder_count,
-            message_count=message_count,
-            attachment_count=attachment_count,
+            root_folder_nid=NID_ROOT_FOLDER,
+            folder_count=folder_count + search_folders + 2,
+            message_count=message_count + search_messages,
+            attachment_count=attachment_count + search_attachments,
+            ipm_subtree_nid=self.root.nid,
+        )
+
+    def _emit_minimum_root(self, ndb: NdbImageBuilder) -> None:
+        physical_root = MessagingFolder(
+            NID_ROOT_FOLDER,
+            "",
+            folders=[
+                self.root,
+                MessagingFolder(NID_SEARCH_ROOT, "Search Root"),
+                MessagingFolder(
+                    NID_SPAM_SEARCH_FOLDER,
+                    "SPAM Search Folder 2",
+                ),
+            ],
+        )
+
+        root_pc = PropertyContext()
+        root_pc.set_unicode(PR_DISPLAY_NAME, "")
+        root_pc.set_integer32(PR_CONTENT_COUNT, 0)
+        root_pc.set_integer32(PR_CONTENT_UNREAD, 0)
+        root_pc.set_boolean(PR_SUBFOLDERS, True)
+        ndb.add_property_context(
+            NID_ROOT_FOLDER,
+            root_pc,
+            parent_nid=NID_ROOT_FOLDER,
+        )
+
+        ndb.add_table_context(
+            make_nid(
+                NidType.HIERARCHY_TABLE,
+                nid_index(NID_ROOT_FOLDER),
+            ),
+            _build_hierarchy_table(physical_root),
+        )
+        ndb.add_table_context(
+            make_nid(
+                NidType.CONTENTS_TABLE,
+                nid_index(NID_ROOT_FOLDER),
+            ),
+            TableContext(),
+        )
+        ndb.add_table_context(
+            make_nid(
+                NidType.ASSOC_CONTENTS_TABLE,
+                nid_index(NID_ROOT_FOLDER),
+            ),
+            TableContext(),
         )
 
     def _emit_folder(
