@@ -63,7 +63,7 @@ jobs:
         shell: pwsh
 
       - name: Check fixture
-        run: python -c "import json, pathlib; p=pathlib.Path('artifacts/windows-interop.pst'); m=json.loads(pathlib.Path('artifacts/windows-interop.expected.json').read_text(encoding='utf-8')); assert p.read_bytes()[:4] == b'!BDN'; assert m['folder_count'] == 3; assert m['message_count'] == 3; assert m['attachment_count'] == 342"
+        run: python -c "import json, pathlib; p=pathlib.Path('artifacts/windows-interop.pst'); m=json.loads(pathlib.Path('artifacts/windows-interop.expected.json').read_text(encoding='utf-8')); assert p.read_bytes()[:4] == b'!BDN'; assert m['folder_count'] == 7; assert m['message_count'] == 3; assert m['attachment_count'] == 342"
 
       - name: Parse PowerShell validators
         run: |
