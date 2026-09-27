@@ -14,6 +14,7 @@ from open_ost2pst.reader.pff_reader import (
     inspect_store,
     load_mailbox,
 )
+from open_ost2pst.verification import verify_store
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -48,6 +49,22 @@ def build_parser() -> argparse.ArgumentParser:
         "verify", help="Verify a generated PST"
     )
     verify_parser.add_argument("pst", type=Path)
+    verify_parser.add_argument(
+        "--source",
+        type=Path,
+        help="Compare the PST against its source OST/PST",
+    )
+    verify_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="as_json",
+        help="Emit the verification report as JSON",
+    )
+    verify_parser.add_argument(
+        "--report",
+        type=Path,
+        help="Write the verification report as JSON",
+    )
 
     return parser
 
@@ -124,12 +141,59 @@ def _cmd_convert(
     return 0
 
 
-def _cmd_verify(pst: Path) -> int:
-    if not pst.is_file():
-        print(f"error: file not found: {pst}")
+def _cmd_verify(
+    pst: Path,
+    source: Path | None = None,
+    as_json: bool = False,
+    report_path: Path | None = None,
+) -> int:
+    try:
+        report = verify_store(pst, source=source)
+    except FileNotFoundError as exc:
+        print(f"error: file not found: {exc.filename or exc.args[0]}")
         return 2
-    print("not implemented: PST verification is planned for the next milestone")
-    return 4
+    except PffUnavailableError as exc:
+        print(f"error: {exc}")
+        return 3
+    except Exception as exc:
+        print(f"error: PST verification failed: {exc}")
+        return 6
+
+    payload = report.to_dict()
+
+    if report_path is not None:
+        try:
+            report_path.write_text(
+                json.dumps(payload, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            print(f"error: verification report could not be saved: {exc}")
+            return 6
+
+    if as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        status = "OK" if report.ok else "FAILED"
+        manifest = report.destination_manifest
+        print(
+            f"Verification {status}: {pst} — "
+            f"{manifest.folder_count} folders, "
+            f"{manifest.message_count} messages, "
+            f"{manifest.attachment_count} attachments"
+        )
+        if source is not None:
+            print(
+                f"Compared with {source}: "
+                f"{report.mismatch_count} mismatch(es)"
+            )
+        if report.mismatches_truncated:
+            print(
+                f"Only the first {len(report.mismatches)} mismatches "
+                "are included in the report."
+            )
+
+    return 0 if report.ok else 6
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -140,7 +204,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "convert":
         return _cmd_convert(args.source, args.destination, args.report)
     if args.command == "verify":
-        return _cmd_verify(args.pst)
+        return _cmd_verify(
+            args.pst,
+            source=args.source,
+            as_json=args.as_json,
+            report_path=args.report,
+        )
 
     raise AssertionError(f"unknown command: {args.command}")
 
