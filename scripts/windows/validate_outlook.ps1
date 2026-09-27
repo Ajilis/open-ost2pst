@@ -12,6 +12,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne "STA") {
+    throw "Outlook COM validation requires an STA thread. Run this script with powershell.exe -STA."
+}
+
 function Release-ComObject {
     param([object]$Object)
     if ($null -ne $Object -and [System.Runtime.InteropServices.Marshal]::IsComObject($Object)) {
