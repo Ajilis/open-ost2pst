@@ -2,6 +2,9 @@ import struct
 
 import pytest
 
+from open_ost2pst.pst.btree import build_bbt
+from open_ost2pst.pst.pages import PageAllocator
+from open_ost2pst.pst.primitives import PageBidAllocator
 from open_ost2pst.pst.blocks import (
     BlockOffsetAllocator,
     BlockTrailer,
@@ -199,3 +202,24 @@ def test_store_rejects_large_payload_until_xblock_support_exists() -> None:
 def test_parse_block_trailer_rejects_non_aligned_input() -> None:
     with pytest.raises(ValueError, match="multiple of 64"):
         parse_block_trailer(b"x" * 65)
+
+
+def test_store_bbt_entries_feed_existing_bbt_builder() -> None:
+    store = DataBlockStore(
+        offset_allocator=BlockOffsetAllocator(0x10000),
+        bid_allocator=BlockBidAllocator(4),
+    )
+    store.extend([b"alpha", b"beta", b"gamma"])
+
+    result = build_bbt(
+        store.bbt_entries,
+        offset_allocator=PageAllocator(0x20000),
+        bid_allocator=PageBidAllocator(0x100),
+    )
+
+    assert result.height == 0
+    assert len(result.pages) == 1
+    assert [offset for offset, _data in store.chunks] == [
+        block.bref.ib for block in store.blocks
+    ]
+    assert [entry.bid for entry in store.bbt_entries] == [4, 8, 12]
