@@ -12,6 +12,17 @@ PR_DISPLAY_NAME = 0x3001
 PR_STORE_SUPPORT_MASK = 0x340D
 
 
+def _entry_by_type(record_set, entry_type):
+    if hasattr(record_set, "get_entry_by_type"):
+        return record_set.get_entry_by_type(entry_type)
+
+    for index in range(record_set.get_number_of_entries()):
+        entry = record_set.get_entry(index)
+        if entry.get_entry_type() == entry_type:
+            return entry
+    return None
+
+
 def test_libpff_reads_message_store_property_context() -> None:
     pc = PropertyContext()
     pc.set_unicode(PR_DISPLAY_NAME, "Open OST2PST Store")
@@ -34,8 +45,8 @@ def test_libpff_reads_message_store_property_context() -> None:
             assert store.get_number_of_record_sets() >= 1
 
             record_set = store.get_record_set(0)
-            display = record_set.get_entry_by_type(PR_DISPLAY_NAME)
-            support = record_set.get_entry_by_type(PR_STORE_SUPPORT_MASK)
+            display = _entry_by_type(record_set, PR_DISPLAY_NAME)
+            support = _entry_by_type(record_set, PR_STORE_SUPPORT_MASK)
 
             assert display is not None
             assert display.get_value_type() == 0x001F
