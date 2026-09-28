@@ -3,6 +3,7 @@ from uuid import UUID
 
 from open_ost2pst.pst.crc import compute_crc
 from open_ost2pst.pst.ltp.tc import read_heap_allocation
+from open_ost2pst.pst.primitives import NidType, nid_type
 from open_ost2pst.pst.nameid import (
     DEFAULT_BUCKET_COUNT,
     FIRST_NAMED_PROPERTY_ID,
@@ -24,6 +25,12 @@ def _entry(image, property_id):
 
 def _value(image, property_id):
     entry = _entry(image, property_id)
+    if nid_type(entry.hnid) == NidType.LTP:
+        return next(
+            value.data
+            for value in image.external_values
+            if value.nid == entry.hnid
+        )
     return read_heap_allocation(image.heap, entry.hnid)
 
 
@@ -35,6 +42,9 @@ def test_empty_nameid_map_has_required_bucket_count() -> None:
     assert bucket.hnid == DEFAULT_BUCKET_COUNT
     assert mapping.property_count == 0
     assert NID_NAME_TO_ID_MAP == 0x61
+    assert _value(image, PR_NAMEID_STREAM_GUID) == b""
+    assert _value(image, PR_NAMEID_STREAM_ENTRY) == b""
+    assert _value(image, PR_NAMEID_STREAM_STRING) == b""
 
 
 def test_string_named_property_builds_string_entry_and_hash_bucket() -> None:
