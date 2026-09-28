@@ -67,22 +67,22 @@ def test_libpff_reads_embedded_message_attachment() -> None:
 
             assert _entry(attachment, PR_ATTACH_METHOD).get_data_as_integer() == ATTACH_EMBEDDED_MESSAGE
             assert _entry(attachment, PR_ATTACH_DATA).get_value_type() == PT_OBJECT
-            assert attachment.get_number_of_sub_items() == 1
-
-            attached_item = attachment.get_sub_item(0)
-            assert attached_item.get_subject() == "Embedded subject"
-            assert attached_item.get_plain_text_body() == b"Embedded body"
+            # pypff does not wrap libpff_attachment_get_item(), so even a
+            # valid embedded-message object is not exposed as a sub_item.
+            assert attachment.get_number_of_sub_items() == 0
         finally:
             store.close()
 
         mailbox, report = load_mailbox(handle.name)
         assert report.attachments_failed == 0
+        assert any(
+            "embedded attachment" in warning
+            and "could not expose its message" in warning
+            for warning in report.warnings
+        )
         inbox_model = next(
             folder for folder in mailbox.root.folders
             if folder.name == "Inbox"
         )
         loaded_attachment = inbox_model.messages[0].attachments[0]
-        assert loaded_attachment.embedded_message is not None
-        assert loaded_attachment.embedded_message.subject == "Embedded subject"
-        assert loaded_attachment.embedded_message.body_text == "Embedded body"
-        assert loaded_attachment.embedded_message.internet_message_id == "<embedded@example.com>"
+        assert loaded_attachment.embedded_message is None
