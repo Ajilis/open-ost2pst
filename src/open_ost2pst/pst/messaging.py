@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from open_ost2pst.binary_payload import (
+    BinaryData,
+    TemporaryBinaryPayload,
+    binary_size,
+)
+
 from .image import NdbBuildResult, NdbImageBuilder, StoredNode
 from .nameid import NameIdMap
 from .ltp.pc import PropertyContext, PropertyType
@@ -81,7 +87,7 @@ class MessagingRecipient:
 @dataclass(slots=True)
 class MessagingAttachment:
     filename: str
-    data: bytes = b""
+    data: BinaryData = b""
     mime_type: str | None = None
     content_id: str | None = None
     content_location: str | None = None
@@ -388,7 +394,7 @@ class MessagingBuilder:
         message: MessagingMessage,
         *,
         filename: str,
-        data: bytes | bytearray | memoryview,
+        data: BinaryData | bytearray | memoryview,
         mime_type: str | None = None,
         content_id: str | None = None,
         content_location: str | None = None,
@@ -396,7 +402,11 @@ class MessagingBuilder:
     ) -> MessagingAttachment:
         attachment = MessagingAttachment(
             filename=filename,
-            data=bytes(data),
+            data=(
+                data
+                if isinstance(data, TemporaryBinaryPayload)
+                else bytes(data)
+            ),
             mime_type=mime_type,
             content_id=content_id,
             content_location=content_location,
@@ -637,7 +647,7 @@ class MessagingBuilder:
                         PR_ATTACH_SIZE: (
                             0
                             if attachment.embedded_message is not None
-                            else len(attachment.data)
+                            else binary_size(attachment.data)
                         ),
                         PR_ATTACH_METHOD: method,
                     },
@@ -789,7 +799,10 @@ def _build_attachment_pc(
     else:
         pc.set_integer32(PR_ATTACH_METHOD, ATTACH_BY_VALUE)
         pc.set_binary(PR_ATTACH_DATA, attachment.data)
-        pc.set_integer32(PR_ATTACH_SIZE, len(attachment.data))
+        pc.set_integer32(
+            PR_ATTACH_SIZE,
+            binary_size(attachment.data),
+        )
 
     if attachment.mime_type:
         pc.set_unicode(PR_ATTACH_MIME_TAG, attachment.mime_type)
