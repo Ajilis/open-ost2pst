@@ -87,6 +87,8 @@ def convert_file(
         raise FileNotFoundError(source_path)
     if source_path.suffix.lower() not in (".ost", ".pst"):
         raise ValueError("source must be an OST or PST file")
+    if source_path.resolve() == destination_path.resolve():
+        raise ValueError("destination must be different from the source file")
     if destination_path.exists() and not overwrite:
         raise FileExistsError(destination_path)
 
