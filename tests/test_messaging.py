@@ -84,7 +84,7 @@ def test_messaging_builder_allocates_named_properties() -> None:
         property_type=PropertyType.UNICODE,
     )
 
-    assert property_id == 0x8000
+    assert property_id == 0x8001
     assert builder.nameid.property_count == 1
     assert message.named_properties[property_id] == (
         PropertyType.UNICODE,
