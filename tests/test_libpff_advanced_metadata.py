@@ -22,7 +22,14 @@ PR_ATTACH_CONTENT_LOCATION = 0x3713
 
 def _entry(item, property_id):
     record_set = item.get_record_set(0)
-    return record_set.get_entry_by_type(property_id)
+    if hasattr(record_set, "get_entry_by_type"):
+        return record_set.get_entry_by_type(property_id)
+
+    for index in range(record_set.get_number_of_entries()):
+        entry = record_set.get_entry(index)
+        if entry.get_entry_type() == property_id:
+            return entry
+    return None
 
 
 def test_libpff_reads_advanced_message_and_attachment_metadata() -> None:
