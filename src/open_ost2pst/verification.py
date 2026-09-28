@@ -447,8 +447,6 @@ def _compare_messages(
             # so it is not meaningful to require a destination match.
             if expected_value is None:
                 continue
-            if expected_value is None:
-                continue
             if expected_value != actual_value:
                 add(
                     "message",
@@ -534,6 +532,11 @@ def _compare_attachments(
         ):
             expected_value = getattr(expected, field)
             actual_value = getattr(actual, field)
+            if (
+                field in ("mime_type", "content_id", "content_location")
+                and expected_value is None
+            ):
+                continue
             if expected_value != actual_value:
                 add(
                     "attachment",
