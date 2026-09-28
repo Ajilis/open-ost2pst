@@ -4,12 +4,21 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+import struct
+from uuid import UUID
 from email.utils import parseaddr
 import mimetypes
 from pathlib import Path
 from typing import Any
 
-from open_ost2pst.model import Attachment, Folder, Mailbox, Message, Recipient
+from open_ost2pst.model import (
+    Attachment,
+    Folder,
+    Mailbox,
+    Message,
+    NamedPropertyValue,
+    Recipient,
+)
 
 # Common MAPI property IDs used by Outlook message/recipient/attachment rows.
 PR_IMPORTANCE = 0x0017
@@ -39,6 +48,32 @@ RECIPIENT_TYPES = {1: "to", 2: "cc", 3: "bcc"}
 
 NID_ROOT_FOLDER = 0x0122
 NID_IPM_SUBTREE = 0x8022
+
+PR_NAMEID_STREAM_GUID = 0x0002
+PR_NAMEID_STREAM_ENTRY = 0x0003
+PR_NAMEID_STREAM_STRING = 0x0004
+FIRST_NAMED_PROPERTY_ID = 0x8000
+LAST_NAMED_PROPERTY_ID = 0x8FFF
+PS_MAPI = UUID("00020328-0000-0000-c000-000000000046")
+PS_PUBLIC_STRINGS = UUID("00020329-0000-0000-c000-000000000046")
+
+PT_INTEGER16 = 0x0002
+PT_INTEGER32 = 0x0003
+PT_FLOAT32 = 0x0004
+PT_FLOAT64 = 0x0005
+PT_BOOLEAN = 0x000B
+PT_INTEGER64 = 0x0014
+PT_STRING8 = 0x001E
+PT_UNICODE = 0x001F
+PT_SYSTIME = 0x0040
+PT_GUID = 0x0048
+PT_BINARY = 0x0102
+
+
+@dataclass(frozen=True, slots=True)
+class _NameIdDefinition:
+    guid: str | None
+    name: str | int
 
 
 class PffUnavailableError(RuntimeError):
@@ -199,6 +234,181 @@ def _property_binary(obj: Any, property_id: int) -> bytes | None:
         return None
 
 
+def _iter_record_entries(obj: Any) -> list[Any]:
+    record_set = _record_set(obj)
+    if record_set is None:
+        return []
+
+    entries: list[Any] = []
+    count = _int_attr(record_set, "number_of_entries")
+    for index in range(count):
+        try:
+            entries.append(record_set.get_entry(index))
+        except Exception:
+            continue
+    return entries
+
+
+def _nameid_guid(
+    guid_index: int,
+    custom_guids: list[UUID],
+) -> str | None:
+    if guid_index == 0:
+        return None
+    if guid_index == 1:
+        return str(PS_MAPI)
+    if guid_index == 2:
+        return str(PS_PUBLIC_STRINGS)
+
+    custom_index = guid_index - 3
+    if not 0 <= custom_index < len(custom_guids):
+        raise ValueError(f"invalid NameID GUID index: {guid_index}")
+    return str(custom_guids[custom_index])
+
+
+def _nameid_string(stream: bytes, offset: int) -> str:
+    if offset < 0 or offset + 4 > len(stream):
+        raise ValueError("NameID string offset is out of bounds")
+    size = struct.unpack_from("<I", stream, offset)[0]
+    start = offset + 4
+    end = start + size
+    if end > len(stream):
+        raise ValueError("NameID string data is truncated")
+    return stream[start:end].decode("utf-16-le")
+
+
+def _extract_nameid_definitions(
+    store: Any,
+    report: ExtractionReport,
+) -> dict[int, _NameIdDefinition]:
+    item = _safe_attr(store, "name_to_id_map")
+    if item is None:
+        try:
+            item = store.get_name_to_id_map()
+        except Exception:
+            return {}
+    if item is None:
+        return {}
+
+    guid_stream = _property_binary(item, PR_NAMEID_STREAM_GUID) or b""
+    entry_stream = _property_binary(item, PR_NAMEID_STREAM_ENTRY) or b""
+    string_stream = _property_binary(item, PR_NAMEID_STREAM_STRING) or b""
+
+    if len(guid_stream) % 16:
+        report.warn("Name-to-ID GUID stream has invalid length")
+        return {}
+    if len(entry_stream) % 8:
+        report.warn("Name-to-ID Entry stream has invalid length")
+        return {}
+
+    custom_guids = [
+        UUID(bytes_le=guid_stream[offset : offset + 16])
+        for offset in range(0, len(guid_stream), 16)
+    ]
+
+    definitions: dict[int, _NameIdDefinition] = {}
+    for offset in range(0, len(entry_stream), 8):
+        property_id_or_offset, packed_guid, property_index = struct.unpack_from(
+            "<IHH",
+            entry_stream,
+            offset,
+        )
+        property_id = FIRST_NAMED_PROPERTY_ID + property_index
+        if property_id > LAST_NAMED_PROPERTY_ID:
+            report.warn(
+                f"Name-to-ID property index out of range: {property_index}"
+            )
+            continue
+
+        guid_index = packed_guid >> 1
+        is_string = bool(packed_guid & 1)
+
+        try:
+            guid = _nameid_guid(guid_index, custom_guids)
+            name: str | int
+            if is_string:
+                name = _nameid_string(
+                    string_stream,
+                    property_id_or_offset,
+                )
+            else:
+                name = property_id_or_offset
+        except (UnicodeDecodeError, ValueError) as exc:
+            report.warn(
+                f"Name-to-ID entry {property_id:#06x} skipped: {exc}"
+            )
+            continue
+
+        definitions[property_id] = _NameIdDefinition(
+            guid=guid,
+            name=name,
+        )
+
+    return definitions
+
+
+def _entry_named_property_value(
+    entry: Any,
+    value_type: int,
+) -> Any:
+    if value_type in (PT_INTEGER16, PT_INTEGER32, PT_INTEGER64):
+        value = _safe_attr(entry, "data_as_integer")
+        return None if value is None else int(value)
+    if value_type == PT_BOOLEAN:
+        value = _safe_attr(entry, "data_as_boolean")
+        if value is None:
+            value = _safe_attr(entry, "data_as_integer")
+        return None if value is None else bool(value)
+    if value_type in (PT_FLOAT32, PT_FLOAT64):
+        value = _safe_attr(entry, "data_as_floating_point")
+        return None if value is None else float(value)
+    if value_type in (PT_STRING8, PT_UNICODE):
+        value = _safe_attr(entry, "data_as_string")
+        return None if value is None else str(value)
+    if value_type == PT_SYSTIME:
+        value = _safe_attr(entry, "data_as_datetime")
+        return value if isinstance(value, datetime) else None
+    if value_type in (PT_GUID, PT_BINARY):
+        value = _safe_attr(entry, "data")
+        return None if value is None else bytes(value)
+    return None
+
+
+def _extract_named_properties(
+    message: Any,
+    definitions: dict[int, _NameIdDefinition],
+    report: ExtractionReport,
+) -> list[NamedPropertyValue]:
+    if not definitions:
+        return []
+
+    result: list[NamedPropertyValue] = []
+    for entry in _iter_record_entries(message):
+        property_id = _int_attr(entry, "entry_type")
+        definition = definitions.get(property_id)
+        if definition is None:
+            continue
+
+        value_type = _int_attr(entry, "value_type")
+        value = _entry_named_property_value(entry, value_type)
+        if value is None:
+            report.warn(
+                "named property "
+                f"{property_id:#06x} type {value_type:#06x} skipped"
+            )
+            continue
+
+        result.append(
+            NamedPropertyValue(
+                guid=definition.guid,
+                name=definition.name,
+                property_type=value_type,
+                value=value,
+            )
+        )
+    return result
+
+
 def _decode_body(value: Any) -> str | None:
     """Decode pypff body bytes without failing the whole message."""
 
@@ -328,6 +538,7 @@ def _attachment_data(attachment: Any) -> bytes:
 def _extract_attachment(
     attachment: Any,
     report: ExtractionReport,
+    nameid_definitions: dict[int, _NameIdDefinition],
 ) -> Attachment:
     filename = _safe_attr(attachment, "long_filename")
     if not filename:
@@ -354,7 +565,11 @@ def _extract_attachment(
             embedded_item = None
 
         if embedded_item is not None:
-            embedded_message = _extract_message(embedded_item, report)
+            embedded_message = _extract_message(
+                embedded_item,
+                report,
+                nameid_definitions,
+            )
         else:
             report.warn(
                 f"embedded attachment {filename!r} could not expose its message"
@@ -386,7 +601,11 @@ def _normalize_rtf_body(value: Any) -> bytes | None:
     return raw
 
 
-def _extract_message(message: Any, report: ExtractionReport) -> Message:
+def _extract_message(
+    message: Any,
+    report: ExtractionReport,
+    nameid_definitions: dict[int, _NameIdDefinition],
+) -> Message:
     flags = _property_integer(message, PR_MESSAGE_FLAGS)
 
     transport_headers = (
@@ -424,6 +643,11 @@ def _extract_message(message: Any, report: ExtractionReport) -> Message:
         creation_time=_datetime_attr(message, "creation_time"),
         is_read=bool(flags & MESSAGE_FLAG_READ) if flags is not None else None,
         recipients=_extract_recipients(message),
+        named_properties=_extract_named_properties(
+            message,
+            nameid_definitions,
+            report,
+        ),
     )
 
     attachment_count = _int_attr(message, "number_of_attachments")
@@ -433,7 +657,11 @@ def _extract_message(message: Any, report: ExtractionReport) -> Message:
         try:
             attachment = message.get_attachment(index)
             result.attachments.append(
-                _extract_attachment(attachment, report)
+                _extract_attachment(
+                    attachment,
+                    report,
+                    nameid_definitions,
+                )
             )
             report.attachments_loaded += 1
         except Exception as exc:
@@ -443,7 +671,12 @@ def _extract_message(message: Any, report: ExtractionReport) -> Message:
     return result
 
 
-def _extract_folder(folder: Any, report: ExtractionReport, fallback_name: str) -> Folder:
+def _extract_folder(
+    folder: Any,
+    report: ExtractionReport,
+    fallback_name: str,
+    nameid_definitions: dict[int, _NameIdDefinition],
+) -> Folder:
     report.folders_seen += 1
     name = _safe_attr(folder, "name") or fallback_name
     result = Folder(name=str(name))
@@ -455,7 +688,13 @@ def _extract_folder(folder: Any, report: ExtractionReport, fallback_name: str) -
     for index in range(message_count):
         try:
             message = folder.get_sub_message(index)
-            result.messages.append(_extract_message(message, report))
+            result.messages.append(
+                _extract_message(
+                    message,
+                    report,
+                    nameid_definitions,
+                )
+            )
             report.messages_loaded += 1
         except Exception as exc:
             report.messages_failed += 1
@@ -472,7 +711,12 @@ def _extract_folder(folder: Any, report: ExtractionReport, fallback_name: str) -
             continue
 
         result.folders.append(
-            _extract_folder(child, report, fallback_name=f"Folder {index + 1}")
+            _extract_folder(
+                child,
+                report,
+                fallback_name=f"Folder {index + 1}",
+                nameid_definitions=nameid_definitions,
+            )
         )
 
     return result
@@ -569,12 +813,14 @@ def load_mailbox(path: str | Path) -> tuple[Mailbox, ExtractionReport]:
 
     try:
         store.open(str(source))
+        nameid_definitions = _extract_nameid_definitions(store, report)
         root = _select_logical_root(store.get_root_folder())
         mailbox = Mailbox(
             root=_extract_folder(
                 root,
                 report,
                 fallback_name="Top of Personal Folders",
+                nameid_definitions=nameid_definitions,
             )
         )
     finally:
