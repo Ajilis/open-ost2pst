@@ -16,6 +16,14 @@ MAX_REPORTED_MISMATCHES = 1000
 
 
 @dataclass(frozen=True, slots=True)
+class NamedPropertyFingerprint:
+    guid: str | None
+    name: str | int
+    property_type: int
+    value_fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
 class AttachmentFingerprint:
     index: int
     filename: str | None
@@ -42,6 +50,7 @@ class MessageFingerprint:
     is_read: bool | None
     rtf_size: int | None
     rtf_sha256: str | None
+    named_properties: tuple[NamedPropertyFingerprint, ...]
     attachments: tuple[AttachmentFingerprint, ...]
 
     @property
@@ -382,11 +391,52 @@ def _message_fingerprint(
             if message.body_rtf is not None
             else None
         ),
+        named_properties=tuple(
+            sorted(
+                (
+                    NamedPropertyFingerprint(
+                        guid=prop.guid,
+                        name=prop.name,
+                        property_type=prop.property_type,
+                        value_fingerprint=_named_property_value_fingerprint(
+                            prop.value
+                        ),
+                    )
+                    for prop in message.named_properties
+                ),
+                key=lambda item: (
+                    item.guid or "",
+                    0 if isinstance(item.name, int) else 1,
+                    str(item.name),
+                    item.property_type,
+                ),
+            )
+        ),
         attachments=tuple(
             _attachment_fingerprint(attachment_index, attachment)
             for attachment_index, attachment in enumerate(message.attachments)
         ),
     )
+
+
+def _named_property_value_fingerprint(value: Any) -> str:
+    if isinstance(value, datetime):
+        return "datetime:" + (_normalize_datetime(value) or "")
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value)
+        return (
+            f"bytes:{len(raw)}:"
+            + hashlib.sha256(raw).hexdigest()
+        )
+    if isinstance(value, bool):
+        return f"bool:{int(value)}"
+    if isinstance(value, int):
+        return f"int:{value}"
+    if isinstance(value, float):
+        return f"float:{value!r}"
+    if isinstance(value, str):
+        return "str:" + value
+    return "repr:" + repr(value)
 
 
 def _attachment_fingerprint(
@@ -470,6 +520,13 @@ def _compare_messages(
                     actual_value,
                 )
 
+        _compare_named_properties(
+            expected,
+            actual,
+            path,
+            add,
+        )
+
         if expected.attachment_count != actual.attachment_count:
             add(
                 "message",
@@ -485,6 +542,47 @@ def _compare_messages(
             path,
             add,
         )
+
+
+def _compare_named_properties(
+    source: MessageFingerprint,
+    destination: MessageFingerprint,
+    message_path: str,
+    add: Any,
+) -> None:
+    expected = {
+        (item.guid, item.name, item.property_type): item.value_fingerprint
+        for item in source.named_properties
+    }
+    actual = {
+        (item.guid, item.name, item.property_type): item.value_fingerprint
+        for item in destination.named_properties
+    }
+
+    for identity, expected_value in expected.items():
+        guid, name, property_type = identity
+        suffix = (
+            f"named[{guid or 'none'}:{name!r}:"
+            f"{property_type:#06x}]"
+        )
+        if identity not in actual:
+            add(
+                "named_property",
+                f"{message_path}/{suffix}",
+                "presence",
+                "present",
+                None,
+            )
+            continue
+        actual_value = actual[identity]
+        if expected_value != actual_value:
+            add(
+                "named_property",
+                f"{message_path}/{suffix}",
+                "value",
+                expected_value,
+                actual_value,
+            )
 
 
 def _compare_attachments(
