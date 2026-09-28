@@ -18,6 +18,9 @@ PSETID_ADDRESS = "00062004-0000-0000-c000-000000000046"
 
 PIDLID_LOCATION = 0x8208
 PIDLID_APPOINTMENT_START_WHOLE = 0x820D
+PIDLID_APPOINTMENT_DURATION = 0x8213
+PIDLID_APPOINTMENT_SUBTYPE = 0x8215
+PIDLID_APPOINTMENT_TZ_START = 0x825E
 PIDLID_HOME_ADDRESS = 0x801A
 PIDLID_TASK_ASSIGNER = 0x8121
 
@@ -64,6 +67,27 @@ def test_named_properties_roundtrip_calendar_contact_and_task() -> None:
         PIDLID_APPOINTMENT_START_WHOLE,
         datetime_to_filetime(start),
         property_type=PropertyType.SYSTIME,
+        guid=PSETID_APPOINTMENT,
+    )
+    builder.set_named_property(
+        appointment,
+        PIDLID_APPOINTMENT_DURATION,
+        60,
+        property_type=PropertyType.INTEGER32,
+        guid=PSETID_APPOINTMENT,
+    )
+    builder.set_named_property(
+        appointment,
+        PIDLID_APPOINTMENT_SUBTYPE,
+        False,
+        property_type=PropertyType.BOOLEAN,
+        guid=PSETID_APPOINTMENT,
+    )
+    builder.set_named_property(
+        appointment,
+        PIDLID_APPOINTMENT_TZ_START,
+        b"tz-definition-bytes",
+        property_type=PropertyType.BINARY,
         guid=PSETID_APPOINTMENT,
     )
 
@@ -126,6 +150,21 @@ def test_named_properties_roundtrip_calendar_contact_and_task() -> None:
         assert start_prop.property_type == int(PropertyType.SYSTIME)
         assert isinstance(start_prop.value, datetime)
         assert start_prop.value.replace(tzinfo=timezone.utc) == start
+        assert _named(
+            loaded_appointment,
+            PSETID_APPOINTMENT,
+            PIDLID_APPOINTMENT_DURATION,
+        ).value == 60
+        assert _named(
+            loaded_appointment,
+            PSETID_APPOINTMENT,
+            PIDLID_APPOINTMENT_SUBTYPE,
+        ).value is False
+        assert _named(
+            loaded_appointment,
+            PSETID_APPOINTMENT,
+            PIDLID_APPOINTMENT_TZ_START,
+        ).value == b"tz-definition-bytes"
 
         loaded_contact = _find_message(
             source_mailbox,
@@ -177,6 +216,21 @@ def test_named_properties_roundtrip_calendar_contact_and_task() -> None:
         )
         assert isinstance(roundtrip_start.value, datetime)
         assert roundtrip_start.value.replace(tzinfo=timezone.utc) == start
+        assert _named(
+            roundtrip_appointment,
+            PSETID_APPOINTMENT,
+            PIDLID_APPOINTMENT_DURATION,
+        ).value == 60
+        assert _named(
+            roundtrip_appointment,
+            PSETID_APPOINTMENT,
+            PIDLID_APPOINTMENT_SUBTYPE,
+        ).value is False
+        assert _named(
+            roundtrip_appointment,
+            PSETID_APPOINTMENT,
+            PIDLID_APPOINTMENT_TZ_START,
+        ).value == b"tz-definition-bytes"
 
         roundtrip_contact = _find_message(
             destination_mailbox,
