@@ -5,8 +5,6 @@ on:
     paths:
       - ".github/workflows/release-windows.yml"
       - "pyproject.toml"
-      - "docs/release-v*.md"
-      - "pyproject.toml"
       - "src/open_ost2pst/**"
       - "scripts/generate_windows_interop_fixture.py"
       - "docs/release-v*.md"
@@ -15,6 +13,8 @@ on:
       - main
     paths:
       - ".github/workflows/release-windows.yml"
+      - "pyproject.toml"
+      - "docs/release-v*.md"
   workflow_dispatch:
 
 permissions:
