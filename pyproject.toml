@@ -23,9 +23,19 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+windows = [
+  "libpff-python-windows==20231205; sys_platform == 'win32'",
+]
+build-windows = [
+  "libpff-python-windows==20231205; sys_platform == 'win32'",
+  "pyinstaller==6.22.3; sys_platform == 'win32'",
+]
 
 [project.scripts]
 open-ost2pst = "open_ost2pst.cli:main"
+
+[project.gui-scripts]
+open-ost2pst-gui = "open_ost2pst.gui:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
