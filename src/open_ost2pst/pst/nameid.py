@@ -105,9 +105,6 @@ class NameIdMap:
         pc = PropertyContext()
         pc.set_integer32(PR_NAMEID_BUCKET_COUNT, self.bucket_count)
 
-        if not self._properties:
-            return pc
-
         guid_stream, guid_indices = self._build_guid_stream()
         string_stream = bytearray()
         entry_stream = bytearray()
@@ -157,12 +154,12 @@ class NameIdMap:
             ) % self.bucket_count
             buckets[bucket_index].extend(hash_record.pack())
 
-        if guid_stream:
-            pc.set_binary(PR_NAMEID_STREAM_GUID, guid_stream)
-        if entry_stream:
-            pc.set_binary(PR_NAMEID_STREAM_ENTRY, entry_stream)
-        if string_stream:
-            pc.set_binary(PR_NAMEID_STREAM_STRING, string_stream)
+        # Keep all three stream properties present even when empty. Current
+        # MS-PST permits an empty map with just the bucket count, but older
+        # libpff readers require the stream record entries to exist.
+        pc.set_binary(PR_NAMEID_STREAM_GUID, guid_stream)
+        pc.set_binary(PR_NAMEID_STREAM_ENTRY, entry_stream)
+        pc.set_binary(PR_NAMEID_STREAM_STRING, string_stream)
 
         for bucket_index, bucket in enumerate(buckets):
             if bucket:
