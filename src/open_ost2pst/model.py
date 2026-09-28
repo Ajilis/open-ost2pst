@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Iterator, Literal
+from typing import Any, Iterator, Literal
 
 RecipientType = Literal["to", "cc", "bcc", "unknown"]
 
@@ -27,6 +27,14 @@ class Recipient:
 
 
 @dataclass(slots=True)
+class NamedPropertyValue:
+    guid: str | None
+    name: str | int
+    property_type: int
+    value: Any
+
+
+@dataclass(slots=True)
 class Message:
     subject: str | None = None
     sender_name: str | None = None
@@ -46,6 +54,7 @@ class Message:
     is_read: bool | None = None
     recipients: list[Recipient] = field(default_factory=list)
     attachments: list[Attachment] = field(default_factory=list)
+    named_properties: list[NamedPropertyValue] = field(default_factory=list)
 
 
 @dataclass(slots=True)

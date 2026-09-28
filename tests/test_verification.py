@@ -1,6 +1,12 @@
 from datetime import datetime, timezone
 
-from open_ost2pst.model import Attachment, Folder, Mailbox, Message
+from open_ost2pst.model import (
+    Attachment,
+    Folder,
+    Mailbox,
+    Message,
+    NamedPropertyValue,
+)
 from open_ost2pst.verification import build_manifest, compare_manifests
 
 
@@ -257,4 +263,75 @@ def test_missing_optional_advanced_metadata_is_not_required_to_match() -> None:
 
     assert mismatches == ()
     assert count == 0
+    assert truncated is False
+
+
+
+def test_named_property_manifest_and_comparison() -> None:
+    source = _mailbox()
+    destination = _mailbox()
+
+    source_message = source.root.folders[0].messages[0]
+    destination_message = destination.root.folders[0].messages[0]
+
+    named = NamedPropertyValue(
+        guid="00062002-0000-0000-c000-000000000046",
+        name=0x8208,
+        property_type=0x001F,
+        value="Room 42",
+    )
+    source_message.named_properties.append(named)
+    destination_message.named_properties.append(
+        NamedPropertyValue(
+            guid=named.guid,
+            name=named.name,
+            property_type=named.property_type,
+            value="Room 42",
+        )
+    )
+
+    source_manifest = build_manifest(source)
+    destination_manifest = build_manifest(destination)
+    fingerprint = source_manifest.folders[1].messages[0].named_properties[0]
+
+    assert fingerprint.name == 0x8208
+    assert fingerprint.value_fingerprint == "str:Room 42"
+
+    mismatches, count, truncated = compare_manifests(
+        source_manifest,
+        destination_manifest,
+    )
+    assert mismatches == ()
+    assert count == 0
+    assert truncated is False
+
+
+def test_named_property_value_change_is_detected() -> None:
+    source = _mailbox()
+    destination = _mailbox()
+
+    for mailbox, value in (
+        (source, "Room 42"),
+        (destination, "Room 43"),
+    ):
+        mailbox.root.folders[0].messages[0].named_properties.append(
+            NamedPropertyValue(
+                guid="00062002-0000-0000-c000-000000000046",
+                name=0x8208,
+                property_type=0x001F,
+                value=value,
+            )
+        )
+
+    mismatches, count, truncated = compare_manifests(
+        build_manifest(source),
+        build_manifest(destination),
+    )
+
+    assert any(
+        item.kind == "named_property"
+        and item.field == "value"
+        for item in mismatches
+    )
+    assert count == 1
     assert truncated is False
