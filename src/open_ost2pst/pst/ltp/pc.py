@@ -6,6 +6,11 @@ from dataclasses import dataclass
 from enum import IntEnum
 import struct
 
+from open_ost2pst.binary_payload import (
+    BinaryData,
+    TemporaryBinaryPayload,
+)
+
 from .bth import BthBuildResult, build_bth, parse_leaf_records
 from .heap import (
     HID_NULL,
@@ -75,7 +80,7 @@ class PropertyContextImage:
 @dataclass(frozen=True, slots=True)
 class _PropertyValue:
     property_type: PropertyType
-    data: bytes
+    data: BinaryData
     inline: bool
 
 
@@ -165,12 +170,17 @@ class PropertyContext:
     def set_binary(
         self,
         property_id: int,
-        value: bytes | bytearray | memoryview,
+        value: BinaryData | bytearray | memoryview,
     ) -> None:
+        data: BinaryData
+        if isinstance(value, TemporaryBinaryPayload):
+            data = value
+        else:
+            data = bytes(value)
         self._set_variable(
             property_id,
             PropertyType.BINARY,
-            bytes(value),
+            data,
         )
 
     def set_object(
@@ -209,8 +219,12 @@ class PropertyContext:
         for property_id in sorted(self._properties):
             prop = self._properties[property_id]
             if prop.inline:
+                assert isinstance(prop.data, bytes)
                 hnid = int.from_bytes(prop.data.ljust(4, b"\x00"), "little")
-            elif 0 < len(prop.data) <= MAX_HEAP_ALLOCATION:
+            elif (
+                isinstance(prop.data, bytes)
+                and 0 < len(prop.data) <= MAX_HEAP_ALLOCATION
+            ):
                 hnid = heap.allocate(prop.data)
             else:
                 hnid = nid_allocator.allocate()
@@ -247,7 +261,7 @@ class PropertyContext:
         self,
         property_id: int,
         property_type: PropertyType,
-        data: bytes,
+        data: BinaryData,
     ) -> None:
         self._validate_property_id(property_id)
         if property_type not in _FIXED_INLINE_TYPES:
