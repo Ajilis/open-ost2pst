@@ -107,58 +107,65 @@ def _cmd_convert(
         print(f"error: OST/PST extraction failed: {exc}")
         return 5
 
-    writer = PstWriter()
     try:
-        writing = writer.write(mailbox, destination)
-    except (OSError, ValueError) as exc:
-        print(f"error: PST writing failed: {exc}")
-        return 5
-
-    try:
-        verification = verify_against_mailbox(
-            destination,
-            mailbox,
-            source_label=str(source),
-        )
-    except Exception as exc:
-        print(f"error: PST was written but automatic verification failed: {exc}")
-        return 6
-
-    if report_path is not None:
-        payload = {
-            "source": str(source),
-            "destination": str(destination),
-            "extraction": extraction.to_dict(),
-            "writing": writing.to_dict(),
-            "verification": verification.to_dict(),
-        }
+        writer = PstWriter()
         try:
-            report_path.write_text(
-                json.dumps(payload, indent=2, sort_keys=True),
-                encoding="utf-8",
-            )
-        except OSError as exc:
-            print(
-                f"error: PST was written but report could not be saved: {exc}"
-            )
+            writing = writer.write(mailbox, destination)
+        except (OSError, ValueError) as exc:
+            print(f"error: PST writing failed: {exc}")
             return 5
 
-    print(
-        f"Wrote {destination}: "
-        f"{writing.folders_written} folders, "
-        f"{writing.messages_written} messages, "
-        f"{writing.attachments_written} attachments"
-    )
+        try:
+            verification = verify_against_mailbox(
+                destination,
+                mailbox,
+                source_label=str(source),
+            )
+        except Exception as exc:
+            print(
+                "error: PST was written but automatic verification failed: "
+                f"{exc}"
+            )
+            return 6
 
-    if not verification.ok:
+        if report_path is not None:
+            payload = {
+                "source": str(source),
+                "destination": str(destination),
+                "extraction": extraction.to_dict(),
+                "writing": writing.to_dict(),
+                "verification": verification.to_dict(),
+            }
+            try:
+                report_path.write_text(
+                    json.dumps(payload, indent=2, sort_keys=True),
+                    encoding="utf-8",
+                )
+            except OSError as exc:
+                print(
+                    "error: PST was written but report could not be saved: "
+                    f"{exc}"
+                )
+                return 5
+
         print(
-            f"error: automatic verification found "
-            f"{verification.mismatch_count} mismatch(es)"
+            f"Wrote {destination}: "
+            f"{writing.folders_written} folders, "
+            f"{writing.messages_written} messages, "
+            f"{writing.attachments_written} attachments"
         )
-        return 6
 
-    print("Verification OK")
-    return 0
+        if not verification.ok:
+            print(
+                f"error: automatic verification found "
+                f"{verification.mismatch_count} mismatch(es)"
+            )
+            return 6
+
+        print("Verification OK")
+        return 0
+    finally:
+        mailbox.cleanup()
 
 
 def _cmd_verify(
