@@ -1,5 +1,6 @@
 import struct
 
+from open_ost2pst.binary_payload import TemporaryBinaryPayload
 from open_ost2pst.pst.amap import AmapAllocator
 from open_ost2pst.pst.blocks import DataBlockStore
 from open_ost2pst.pst.large_data import (
@@ -98,3 +99,31 @@ def test_more_than_1021_data_blocks_uses_xxblock() -> None:
         tree.index_blocks[0].bref.bid,
         tree.index_blocks[1].bref.bid,
     )
+
+
+def test_temporary_payload_streams_into_xblock() -> None:
+    store = _store()
+    raw = b"S" * (BLOCK_MAX_PAYLOAD * 3 + 17)
+    payload = TemporaryBinaryPayload.from_chunks(
+        [
+            raw[:5000],
+            raw[5000:15000],
+            raw[15000:],
+        ],
+        max_bytes=len(raw),
+    )
+
+    try:
+        tree = store_data_stream(store, payload)
+    finally:
+        payload.close()
+
+    assert tree.logical_size == len(raw)
+    assert len(tree.data_blocks) == 4
+    assert tree.uses_xblock is True
+
+    reconstructed = b"".join(
+        block.data[: block.payload_size]
+        for block in tree.data_blocks
+    )
+    assert reconstructed == raw
