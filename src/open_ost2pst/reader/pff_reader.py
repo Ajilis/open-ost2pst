@@ -18,6 +18,7 @@ from open_ost2pst.model import (
     Message,
     NamedPropertyValue,
     Recipient,
+    StandardPropertyValue,
 )
 
 # Common MAPI property IDs used by Outlook message/recipient/attachment rows.
@@ -30,6 +31,12 @@ PR_TRANSPORT_MESSAGE_HEADERS = 0x007D
 PR_INTERNET_MESSAGE_ID = 0x1035
 PR_DISPLAY_NAME = 0x3001
 PR_EMAIL_ADDRESS = 0x3003
+PR_CONTAINER_CLASS = 0x3613
+PR_GIVEN_NAME = 0x3A06
+PR_BUSINESS_TELEPHONE_NUMBER = 0x3A08
+PR_SURNAME = 0x3A11
+PR_COMPANY_NAME = 0x3A16
+PR_MOBILE_TELEPHONE_NUMBER = 0x3A1C
 PR_RECIPIENT_TYPE = 0x0C15
 PR_SENDER_EMAIL_ADDRESS = 0x0C1F
 PR_MESSAGE_FLAGS = 0x0E07
@@ -467,6 +474,49 @@ def _entry_named_property_value(
     return None
 
 
+CONTACT_STANDARD_PROPERTIES = (
+    PR_DISPLAY_NAME,
+    PR_GIVEN_NAME,
+    PR_BUSINESS_TELEPHONE_NUMBER,
+    PR_SURNAME,
+    PR_COMPANY_NAME,
+    PR_MOBILE_TELEPHONE_NUMBER,
+)
+
+
+def _extract_standard_properties(
+    message: Any,
+    report: ExtractionReport,
+) -> list[StandardPropertyValue]:
+    result: list[StandardPropertyValue] = []
+    for property_id in CONTACT_STANDARD_PROPERTIES:
+        entry = _entry(message, property_id)
+        if entry is None:
+            continue
+
+        value_type = _legacy_integer(
+            entry,
+            "value_type",
+            "get_value_type",
+        )
+        value = _entry_named_property_value(entry, value_type)
+        if value is None:
+            report.warn(
+                "standard property "
+                f"{property_id:#06x} type {value_type:#06x} skipped"
+            )
+            continue
+
+        result.append(
+            StandardPropertyValue(
+                property_id=property_id,
+                property_type=value_type,
+                value=value,
+            )
+        )
+    return result
+
+
 def _extract_named_properties(
     message: Any,
     definitions: dict[int, _NameIdDefinition],
@@ -744,6 +794,10 @@ def _extract_message(
         creation_time=_datetime_attr(message, "creation_time"),
         is_read=bool(flags & MESSAGE_FLAG_READ) if flags is not None else None,
         recipients=_extract_recipients(message),
+        standard_properties=_extract_standard_properties(
+            message,
+            report,
+        ),
         named_properties=_extract_named_properties(
             message,
             nameid_definitions,
@@ -780,7 +834,10 @@ def _extract_folder(
 ) -> Folder:
     report.folders_seen += 1
     name = _safe_attr(folder, "name") or fallback_name
-    result = Folder(name=str(name))
+    result = Folder(
+        name=str(name),
+        container_class=_property_string(folder, PR_CONTAINER_CLASS),
+    )
     report.folders_loaded += 1
 
     message_count = _int_attr(folder, "number_of_sub_messages")
