@@ -252,3 +252,146 @@ def test_normalize_rtf_body_removes_pypff_terminal_null() -> None:
         b"{\\rtf1\\ansi test}"
     ) == b"{\\rtf1\\ansi test}"
     assert pff_reader._normalize_rtf_body(None) is None
+
+
+class LegacyFakeEntry:
+    def __init__(
+        self,
+        entry_type,
+        value_type,
+        *,
+        string=None,
+        integer=None,
+        floating=None,
+        boolean=None,
+        dt=None,
+        data=None,
+    ):
+        self._entry_type = entry_type
+        self._value_type = value_type
+        self._string = string
+        self._integer = integer
+        self._floating = floating
+        self._boolean = boolean
+        self._datetime = dt
+        self._data = data
+
+    def get_entry_type(self):
+        return self._entry_type
+
+    def get_value_type(self):
+        return self._value_type
+
+    def get_data_as_string(self):
+        return self._string
+
+    def get_data_as_integer(self):
+        return self._integer
+
+    def get_data_as_floating_point(self):
+        return self._floating
+
+    def get_data_as_boolean(self):
+        return self._boolean
+
+    def get_data_as_datetime(self):
+        return self._datetime
+
+    def get_data(self):
+        return self._data
+
+
+class LegacyFakeRecordSet:
+    def __init__(self, entries):
+        self._entries = list(entries)
+
+    def get_number_of_entries(self):
+        return len(self._entries)
+
+    def get_entry(self, index):
+        return self._entries[index]
+
+
+class LegacyFakeItem:
+    def __init__(self, entries):
+        self._record_set = LegacyFakeRecordSet(entries)
+
+    def get_record_set(self, index):
+        assert index == 0
+        return self._record_set
+
+
+def test_legacy_pypff_record_getters_support_standard_properties() -> None:
+    item = LegacyFakeItem(
+        [
+            LegacyFakeEntry(
+                pff_reader.PR_MESSAGE_CLASS,
+                pff_reader.PT_UNICODE,
+                string="IPM.Note.Custom",
+            ),
+            LegacyFakeEntry(
+                pff_reader.PR_IMPORTANCE,
+                pff_reader.PT_INTEGER32,
+                integer=2,
+            ),
+            LegacyFakeEntry(
+                pff_reader.PR_CONVERSATION_INDEX,
+                pff_reader.PT_BINARY,
+                data=b"conversation-index",
+            ),
+        ]
+    )
+
+    assert (
+        pff_reader._property_string(
+            item,
+            pff_reader.PR_MESSAGE_CLASS,
+        )
+        == "IPM.Note.Custom"
+    )
+    assert (
+        pff_reader._property_integer(
+            item,
+            pff_reader.PR_IMPORTANCE,
+        )
+        == 2
+    )
+    assert (
+        pff_reader._property_binary(
+            item,
+            pff_reader.PR_CONVERSATION_INDEX,
+        )
+        == b"conversation-index"
+    )
+
+
+def test_legacy_pypff_record_getters_support_named_properties() -> None:
+    property_id = 0x8001
+    definitions = {
+        property_id: pff_reader._NameIdDefinition(
+            guid=None,
+            name="X-Legacy",
+        )
+    }
+    item = LegacyFakeItem(
+        [
+            LegacyFakeEntry(
+                property_id,
+                pff_reader.PT_UNICODE,
+                string="legacy-value",
+            )
+        ]
+    )
+    report = pff_reader.ExtractionReport(path="legacy.pst")
+
+    values = pff_reader._extract_named_properties(
+        item,
+        definitions,
+        report,
+    )
+
+    assert len(values) == 1
+    assert values[0].name == "X-Legacy"
+    assert values[0].property_type == pff_reader.PT_UNICODE
+    assert values[0].value == "legacy-value"
+    assert report.warnings == []
