@@ -106,10 +106,16 @@ def _copy_folder_contents(
         _copy_message(message, destination, builder, report)
 
     for child in source.folders:
-        child_destination = builder.add_folder(
-            destination,
-            child.name,
-        )
+        if (
+            destination is builder.root
+            and child.name.casefold() == "deleted items"
+        ):
+            child_destination = builder.deleted_items
+        else:
+            child_destination = builder.add_folder(
+                destination,
+                child.name,
+            )
         _copy_folder_contents(
             child,
             child_destination,

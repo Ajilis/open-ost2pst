@@ -4,6 +4,7 @@ import pytest
 
 from open_ost2pst.pst.messaging import MessagingBuilder
 from open_ost2pst.reader.pff_reader import load_mailbox
+from tests._libpff_helpers import get_child_by_name, get_ipm_subtree
 
 
 pypff = pytest.importorskip("pypff")
@@ -40,8 +41,8 @@ def test_libpff_reads_large_rtf_body_exactly() -> None:
         store = pypff.file()
         store.open(handle.name)
         try:
-            root = store.get_root_folder()
-            inbox_item = root.get_sub_folder(0)
+            root = get_ipm_subtree(store)
+            inbox_item = get_child_by_name(root, "Inbox")
             message = inbox_item.get_sub_message(0)
 
             returned = message.get_rtf_body()
@@ -52,4 +53,8 @@ def test_libpff_reads_large_rtf_body_exactly() -> None:
 
         mailbox, report = load_mailbox(handle.name)
         assert report.messages_failed == 0
-        assert mailbox.root.folders[0].messages[0].body_rtf == rtf
+        mailbox_inbox = next(
+            folder for folder in mailbox.root.folders
+            if folder.name == "Inbox"
+        )
+        assert mailbox_inbox.messages[0].body_rtf == rtf

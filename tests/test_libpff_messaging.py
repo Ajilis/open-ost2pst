@@ -3,6 +3,7 @@ import tempfile
 import pytest
 
 from open_ost2pst.pst.messaging import MessagingBuilder
+from tests._libpff_helpers import get_child_by_name, get_ipm_subtree
 
 
 pypff = pytest.importorskip("pypff")
@@ -33,12 +34,10 @@ def test_libpff_reads_generated_folder_and_message() -> None:
         store = pypff.file()
         store.open(handle.name)
         try:
-            root = store.get_root_folder()
-            assert root is not None
+            root = get_ipm_subtree(store)
             assert root.get_name() == "Top of Personal Folders"
-            assert root.get_number_of_sub_folders() == 1
 
-            inbox_item = root.get_sub_folder(0)
+            inbox_item = get_child_by_name(root, "Inbox")
             assert inbox_item is not None
             assert inbox_item.get_name() == "Inbox"
             assert inbox_item.get_number_of_sub_messages() == 1

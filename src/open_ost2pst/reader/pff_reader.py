@@ -26,6 +26,9 @@ PR_SENDER_SMTP_ADDRESS = 0x5D01
 MESSAGE_FLAG_READ = 0x00000001
 RECIPIENT_TYPES = {1: "to", 2: "cc", 3: "bcc"}
 
+NID_ROOT_FOLDER = 0x0122
+NID_IPM_SUBTREE = 0x8022
+
 
 class PffUnavailableError(RuntimeError):
     """Raised when the pypff bindings are not available."""
@@ -373,6 +376,33 @@ def _extract_folder(folder: Any, report: ExtractionReport, fallback_name: str) -
     return result
 
 
+def _select_logical_root(root: Any) -> Any:
+    """Return the user-visible IPM subtree when a standard PST root exists."""
+
+    root_identifier = _int_attr(root, "identifier")
+    if root_identifier != NID_ROOT_FOLDER:
+        return root
+
+    child_count = _int_attr(root, "number_of_sub_folders")
+    fallback = None
+
+    for index in range(child_count):
+        try:
+            child = root.get_sub_folder(index)
+        except Exception:
+            continue
+
+        identifier = _int_attr(child, "identifier")
+        if identifier == NID_IPM_SUBTREE:
+            return child
+
+        name = _safe_attr(child, "name")
+        if name == "Top of Personal Folders":
+            fallback = child
+
+    return fallback or root
+
+
 def _walk_folder(folder: Any, stats: InspectionStats) -> None:
     stats.folders += 1
 
@@ -437,9 +467,13 @@ def load_mailbox(path: str | Path) -> tuple[Mailbox, ExtractionReport]:
 
     try:
         store.open(str(source))
-        root = store.get_root_folder()
+        root = _select_logical_root(store.get_root_folder())
         mailbox = Mailbox(
-            root=_extract_folder(root, report, fallback_name="Root")
+            root=_extract_folder(
+                root,
+                report,
+                fallback_name="Top of Personal Folders",
+            )
         )
     finally:
         try:

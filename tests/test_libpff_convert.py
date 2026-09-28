@@ -6,6 +6,7 @@ import pytest
 
 from open_ost2pst.cli import _cmd_convert
 from open_ost2pst.pst.messaging import MessagingBuilder
+from tests._libpff_helpers import get_child_by_name, get_ipm_subtree
 
 
 pypff = pytest.importorskip("pypff")
@@ -56,12 +57,10 @@ def test_end_to_end_convert_reader_model_writer_libpff() -> None:
         store = pypff.file()
         store.open(str(destination))
         try:
-            converted_root = store.get_root_folder()
-            assert converted_root is not None
+            converted_root = get_ipm_subtree(store)
             assert converted_root.get_name() == "Source Root"
-            assert converted_root.get_number_of_sub_folders() == 1
 
-            converted_inbox = converted_root.get_sub_folder(0)
+            converted_inbox = get_child_by_name(converted_root, "Inbox")
             assert converted_inbox.get_name() == "Inbox"
             assert converted_inbox.get_number_of_sub_messages() == 1
 
