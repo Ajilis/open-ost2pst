@@ -138,62 +138,82 @@ def convert_file(
         source_path,
         progress_callback=extraction_progress,
     )
-    emit(55, "Extraction terminée", f"{mailbox.message_count} messages")
 
-    write_total = max(
-        1,
-        mailbox.folder_count + mailbox.message_count + mailbox.attachment_count,
-    )
+    try:
+        emit(55, "Extraction terminée", f"{mailbox.message_count} messages")
 
-    def writing_progress(report: WriteReport) -> None:
-        done = (
-            report.folders_written
-            + report.messages_written
-            + report.attachments_written
-            + report.attachments_failed
-        )
-        percent = 55 + min(25, round(25 * done / write_total))
-        emit(percent, "Préparation du PST", f"{min(done, write_total)}/{write_total}")
-
-    builder, writing = mailbox_to_messaging(
-        mailbox,
-        progress_callback=writing_progress,
-    )
-
-    emit(80, "Construction du PST", "Assemblage NDB/LTP/Messaging")
-    built = builder.build()
-
-    emit(87, "Écriture du PST", destination_path.name)
-    built.pst.write(destination_path)
-
-    emit(92, "Vérification", "Réouverture avec libpff")
-    verification = verify_against_mailbox(
-        destination_path,
-        mailbox,
-        source_label=str(source_path),
-    )
-
-    result = ConversionResult(
-        source=source_path,
-        destination=destination_path,
-        inspection=inspection,
-        extraction=extraction,
-        writing=writing,
-        verification=verification,
-    )
-
-    if report_path is not None:
-        emit(97, "Rapport", Path(report_path).name)
-        report_target = Path(report_path)
-        report_target.parent.mkdir(parents=True, exist_ok=True)
-        report_target.write_text(
-            json.dumps(result.to_dict(), indent=2, sort_keys=True),
-            encoding="utf-8",
+        write_total = max(
+            1,
+            (
+                mailbox.folder_count
+                + mailbox.message_count
+                + mailbox.attachment_count
+            ),
         )
 
-    if not verification.ok:
-        emit(100, "Vérification échouée", f"{verification.mismatch_count} écart(s)")
-        raise ConversionVerificationError(result)
+        def writing_progress(report: WriteReport) -> None:
+            done = (
+                report.folders_written
+                + report.messages_written
+                + report.attachments_written
+                + report.attachments_failed
+            )
+            percent = 55 + min(25, round(25 * done / write_total))
+            emit(
+                percent,
+                "Préparation du PST",
+                f"{min(done, write_total)}/{write_total}",
+            )
 
-    emit(100, "Terminé", destination_path.name)
-    return result
+        builder, writing = mailbox_to_messaging(
+            mailbox,
+            progress_callback=writing_progress,
+        )
+
+        emit(80, "Construction du PST", "Assemblage NDB/LTP/Messaging")
+        built = builder.build()
+
+        emit(87, "Écriture du PST", destination_path.name)
+        built.pst.write(destination_path)
+
+        emit(92, "Vérification", "Réouverture avec libpff")
+        verification = verify_against_mailbox(
+            destination_path,
+            mailbox,
+            source_label=str(source_path),
+        )
+
+        result = ConversionResult(
+            source=source_path,
+            destination=destination_path,
+            inspection=inspection,
+            extraction=extraction,
+            writing=writing,
+            verification=verification,
+        )
+
+        if report_path is not None:
+            emit(97, "Rapport", Path(report_path).name)
+            report_target = Path(report_path)
+            report_target.parent.mkdir(parents=True, exist_ok=True)
+            report_target.write_text(
+                json.dumps(
+                    result.to_dict(),
+                    indent=2,
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+
+        if not verification.ok:
+            emit(
+                100,
+                "Vérification échouée",
+                f"{verification.mismatch_count} écart(s)",
+            )
+            raise ConversionVerificationError(result)
+
+        emit(100, "Terminé", destination_path.name)
+        return result
+    finally:
+        mailbox.cleanup()
