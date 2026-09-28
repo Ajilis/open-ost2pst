@@ -9,7 +9,7 @@ from uuid import UUID
 from email.utils import parseaddr
 import mimetypes
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from open_ost2pst.model import (
     Attachment,
@@ -760,6 +760,7 @@ def _extract_message(
     message: Any,
     report: ExtractionReport,
     nameid_definitions: dict[int, _NameIdDefinition],
+    progress_callback: Callable[[ExtractionReport], None] | None = None,
 ) -> Message:
     flags = _property_integer(message, PR_MESSAGE_FLAGS)
 
@@ -826,6 +827,8 @@ def _extract_message(
         except Exception as exc:
             report.attachments_failed += 1
             report.warn(f"attachment {index} failed in message {result.subject!r}: {exc}")
+        if progress_callback is not None:
+            progress_callback(report)
 
     return result
 
@@ -835,6 +838,7 @@ def _extract_folder(
     report: ExtractionReport,
     fallback_name: str,
     nameid_definitions: dict[int, _NameIdDefinition],
+    progress_callback: Callable[[ExtractionReport], None] | None = None,
 ) -> Folder:
     report.folders_seen += 1
     name = _safe_attr(folder, "name") or fallback_name
@@ -843,6 +847,8 @@ def _extract_folder(
         container_class=_property_string(folder, PR_CONTAINER_CLASS),
     )
     report.folders_loaded += 1
+    if progress_callback is not None:
+        progress_callback(report)
 
     message_count = _int_attr(folder, "number_of_sub_messages")
     report.messages_seen += message_count
@@ -855,12 +861,15 @@ def _extract_folder(
                     message,
                     report,
                     nameid_definitions,
+                    progress_callback,
                 )
             )
             report.messages_loaded += 1
         except Exception as exc:
             report.messages_failed += 1
             report.warn(f"message {index} failed in folder {result.name!r}: {exc}")
+        if progress_callback is not None:
+            progress_callback(report)
 
     child_count = _int_attr(folder, "number_of_sub_folders")
     for index in range(child_count):
@@ -870,6 +879,8 @@ def _extract_folder(
             report.folders_seen += 1
             report.folders_failed += 1
             report.warn(f"subfolder {index} failed in folder {result.name!r}: {exc}")
+            if progress_callback is not None:
+                progress_callback(report)
             continue
 
         result.folders.append(
@@ -878,6 +889,7 @@ def _extract_folder(
                 report,
                 fallback_name=f"Folder {index + 1}",
                 nameid_definitions=nameid_definitions,
+                progress_callback=progress_callback,
             )
         )
 
@@ -957,7 +969,11 @@ def inspect_store(path: str | Path) -> InspectionStats:
     return stats
 
 
-def load_mailbox(path: str | Path) -> tuple[Mailbox, ExtractionReport]:
+def load_mailbox(
+    path: str | Path,
+    *,
+    progress_callback: Callable[[ExtractionReport], None] | None = None,
+) -> tuple[Mailbox, ExtractionReport]:
     """Load an OST/PST into the format-neutral mailbox model.
 
     Extraction is best-effort: corrupt messages, folders, or attachments are
@@ -983,6 +999,7 @@ def load_mailbox(path: str | Path) -> tuple[Mailbox, ExtractionReport]:
                 report,
                 fallback_name="Top of Personal Folders",
                 nameid_definitions=nameid_definitions,
+                progress_callback=progress_callback,
             )
         )
     finally:
