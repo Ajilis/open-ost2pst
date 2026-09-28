@@ -244,6 +244,7 @@ def _copy_message_children(
         if count_for_report:
             report.attachments_written += 1
 
+
 def _recipient_label(recipient: Recipient) -> str:
     return recipient.name or recipient.email or ""
 
