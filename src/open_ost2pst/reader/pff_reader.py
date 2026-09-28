@@ -11,6 +11,10 @@ import mimetypes
 from pathlib import Path
 from typing import Any, Callable
 
+from open_ost2pst.binary_payload import (
+    BinaryData,
+    TemporaryBinaryPayload,
+)
 from open_ost2pst.model import (
     Attachment,
     Folder,
@@ -51,6 +55,8 @@ PR_SENDER_SMTP_ADDRESS = 0x5D01
 
 MESSAGE_FLAG_READ = 0x00000001
 ATTACH_EMBEDDED_MESSAGE = 5
+ATTACHMENT_STREAM_THRESHOLD = 1024 * 1024
+ATTACHMENT_CHUNK_SIZE = 1024 * 1024
 RECIPIENT_TYPES = {1: "to", 2: "cc", 3: "bcc"}
 
 NID_ROOT_FOLDER = 0x0122
@@ -112,6 +118,8 @@ class ExtractionReport:
     attachments_seen: int = 0
     attachments_loaded: int = 0
     attachments_failed: int = 0
+    attachments_streamed: int = 0
+    attachment_temp_bytes: int = 0
     warnings: list[str] = field(default_factory=list)
 
     def warn(self, message: str) -> None:
@@ -660,34 +668,50 @@ def _extract_recipients(message: Any) -> list[Recipient]:
     return recipients
 
 
-def _attachment_data(attachment: Any) -> bytes:
-    size = _int_attr(attachment, "size")
-    if size == 0:
-        return b""
-
+def _attachment_chunks(
+    attachment: Any,
+    size: int,
+):
     try:
         attachment.seek_offset(0, 0)
     except Exception:
         pass
 
-    chunks: list[bytes] = []
     remaining = size
-    chunk_size = 1024 * 1024
-
     while remaining > 0:
-        request_size = min(chunk_size, remaining)
+        request_size = min(ATTACHMENT_CHUNK_SIZE, remaining)
         data = attachment.read_buffer(request_size)
         if not data:
             break
 
         chunk = bytes(data)
-        chunks.append(chunk)
+        yield chunk
         remaining -= len(chunk)
 
         if len(chunk) < request_size:
             break
 
-    return b"".join(chunks)
+
+def _attachment_data(
+    attachment: Any,
+    report: ExtractionReport,
+) -> BinaryData:
+    size = _int_attr(attachment, "size")
+    if size == 0:
+        return b""
+
+    chunks = _attachment_chunks(attachment, size)
+
+    if size <= ATTACHMENT_STREAM_THRESHOLD:
+        return b"".join(chunks)
+
+    payload = TemporaryBinaryPayload.from_chunks(
+        chunks,
+        max_bytes=size,
+    )
+    report.attachments_streamed += 1
+    report.attachment_temp_bytes += len(payload)
+    return payload
 
 
 def _extract_attachment(
@@ -735,7 +759,7 @@ def _extract_attachment(
         data=(
             b""
             if embedded_message is not None
-            else _attachment_data(attachment)
+            else _attachment_data(attachment, report)
         ),
         mime_type=mime_type,
         content_id=_property_string(attachment, PR_ATTACH_CONTENT_ID),

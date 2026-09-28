@@ -6,13 +6,18 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Iterator, Literal
 
+from open_ost2pst.binary_payload import (
+    BinaryData,
+    TemporaryBinaryPayload,
+)
+
 RecipientType = Literal["to", "cc", "bcc", "unknown"]
 
 
 @dataclass(slots=True)
 class Attachment:
     filename: str | None = None
-    data: bytes = b""
+    data: BinaryData = b""
     mime_type: str | None = None
     content_id: str | None = None
     content_location: str | None = None
@@ -83,6 +88,26 @@ class Folder:
 @dataclass(slots=True)
 class Mailbox:
     root: Folder
+
+    def cleanup(self) -> None:
+        """Close and delete temporary attachment payloads owned by this mailbox."""
+
+        seen: set[int] = set()
+
+        def cleanup_message(message: Message) -> None:
+            for attachment in message.attachments:
+                payload = attachment.data
+                if isinstance(payload, TemporaryBinaryPayload):
+                    identity = id(payload)
+                    if identity not in seen:
+                        seen.add(identity)
+                        payload.close()
+                if attachment.embedded_message is not None:
+                    cleanup_message(attachment.embedded_message)
+
+        for folder in self.root.walk():
+            for message in folder.messages:
+                cleanup_message(message)
 
     @property
     def folder_count(self) -> int:

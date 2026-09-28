@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
+
+from open_ost2pst.binary_payload import binary_sha256, binary_size
 from pathlib import Path
 from typing import Any
 
@@ -238,14 +240,17 @@ def verify_against_mailbox(
     destination_path = Path(destination)
     destination_mailbox, destination_extraction = load_mailbox(destination_path)
 
-    source_manifest = build_manifest(
-        source_mailbox,
-        path=source_label,
-    )
-    destination_manifest = build_manifest(
-        destination_mailbox,
-        path=destination_path,
-    )
+    try:
+        source_manifest = build_manifest(
+            source_mailbox,
+            path=source_label,
+        )
+        destination_manifest = build_manifest(
+            destination_mailbox,
+            path=destination_path,
+        )
+    finally:
+        destination_mailbox.cleanup()
     (
         mismatches,
         mismatch_count,
@@ -278,52 +283,64 @@ def verify_store(
 
     destination_path = Path(destination)
     destination_mailbox, destination_extraction = load_mailbox(destination_path)
-    destination_manifest = build_manifest(
-        destination_mailbox,
-        path=destination_path,
-    )
+    source_mailbox: Mailbox | None = None
 
-    source_extraction: ExtractionReport | None = None
-    source_manifest: StoreManifest | None = None
-    mismatches: tuple[VerificationMismatch, ...] = ()
-    mismatch_count = 0
-    mismatches_truncated = False
-
-    if source is not None:
-        source_path = Path(source)
-        source_mailbox, source_extraction = load_mailbox(source_path)
-        source_manifest = build_manifest(
-            source_mailbox,
-            path=source_path,
-        )
-        (
-            mismatches,
-            mismatch_count,
-            mismatches_truncated,
-        ) = compare_manifests(
-            source_manifest,
-            destination_manifest,
+    try:
+        destination_manifest = build_manifest(
+            destination_mailbox,
+            path=destination_path,
         )
 
-    destination_clean = not _has_extraction_failures(destination_extraction)
-    source_clean = (
-        source_extraction is None
-        or not _has_extraction_failures(source_extraction)
-    )
+        source_extraction: ExtractionReport | None = None
+        source_manifest: StoreManifest | None = None
+        mismatches: tuple[VerificationMismatch, ...] = ()
+        mismatch_count = 0
+        mismatches_truncated = False
 
-    return VerificationReport(
-        destination=str(destination_path),
-        source=str(source) if source is not None else None,
-        ok=destination_clean and source_clean and mismatch_count == 0,
-        destination_extraction=destination_extraction,
-        source_extraction=source_extraction,
-        destination_manifest=destination_manifest,
-        source_manifest=source_manifest,
-        mismatches=mismatches,
-        mismatch_count=mismatch_count,
-        mismatches_truncated=mismatches_truncated,
-    )
+        if source is not None:
+            source_path = Path(source)
+            source_mailbox, source_extraction = load_mailbox(source_path)
+            source_manifest = build_manifest(
+                source_mailbox,
+                path=source_path,
+            )
+            (
+                mismatches,
+                mismatch_count,
+                mismatches_truncated,
+            ) = compare_manifests(
+                source_manifest,
+                destination_manifest,
+            )
 
+        destination_clean = not _has_extraction_failures(
+            destination_extraction
+        )
+        source_clean = (
+            source_extraction is None
+            or not _has_extraction_failures(source_extraction)
+        )
+
+        return VerificationReport(
+            destination=str(destination_path),
+            source=str(source) if source is not None else None,
+            ok=(
+                destination_clean
+                and source_clean
+                and mismatch_count == 0
+            ),
+            destination_extraction=destination_extraction,
+            source_extraction=source_extraction,
+            destination_manifest=destination_manifest,
+            source_manifest=source_manifest,
+            mismatches=mismatches,
+            mismatch_count=mismatch_count,
+            mismatches_truncated=mismatches_truncated,
+        )
+    finally:
+        destination_mailbox.cleanup()
+        if source_mailbox is not None:
+            source_mailbox.cleanup()
 
 def _append_folder_manifest(
     folder: Folder,
@@ -443,15 +460,14 @@ def _attachment_fingerprint(
     index: int,
     attachment: Attachment,
 ) -> AttachmentFingerprint:
-    data = bytes(attachment.data)
     return AttachmentFingerprint(
         index=index,
         filename=attachment.filename,
         mime_type=attachment.mime_type,
         content_id=attachment.content_id,
         content_location=attachment.content_location,
-        size=len(data),
-        sha256=hashlib.sha256(data).hexdigest(),
+        size=binary_size(attachment.data),
+        sha256=binary_sha256(attachment.data),
     )
 
 

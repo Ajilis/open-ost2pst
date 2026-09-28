@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from open_ost2pst.binary_payload import TemporaryBinaryPayload
 from open_ost2pst.reader import pff_reader
 
 
@@ -395,3 +396,37 @@ def test_legacy_pypff_record_getters_support_named_properties() -> None:
     assert values[0].property_type == pff_reader.PT_UNICODE
     assert values[0].value == "legacy-value"
     assert report.warnings == []
+
+
+def test_large_attachment_uses_temporary_payload_and_cleanup(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    data = b"x" * (pff_reader.ATTACHMENT_STREAM_THRESHOLD + 123)
+    attachment = FakeAttachment(
+        "large.bin",
+        data,
+        mime_type="application/octet-stream",
+    )
+    message = FakeMessage(attachments=[attachment])
+    root = FakeFolder(
+        "Root",
+        folders=[FakeFolder("Inbox", messages=[message])],
+    )
+    _install_fake_pypff(monkeypatch, root)
+
+    source = tmp_path / "large.ost"
+    source.write_bytes(b"fake")
+
+    mailbox, report = pff_reader.load_mailbox(source)
+    payload = mailbox.root.folders[0].messages[0].attachments[0].data
+
+    assert isinstance(payload, TemporaryBinaryPayload)
+    assert len(payload) == len(data)
+    assert payload == data
+    assert report.attachments_streamed == 1
+    assert report.attachment_temp_bytes == len(data)
+    assert payload.closed is False
+
+    mailbox.cleanup()
+    assert payload.closed is True
