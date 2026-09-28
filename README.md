@@ -87,7 +87,9 @@ Outlook item fidelity now includes native Calendar, Contact, and Task objects:
 - Tasks use `IPM.Task` with PSETID_Task status, percent complete, start/due/completed dates, complete flag and owner, plus common start/end/reminder properties.
 - Folder container classes, selected standard contact properties, and all named properties survive the pypff -> Mailbox -> PST bridge.
 
-Recurring appointment/task patterns and the full meeting-request/response workflow remain future extensions; single appointments and calendar meeting objects are covered now.
+Recurring Outlook items are now supported for common Gregorian daily, weekly, monthly/monthly-nth, and yearly patterns, with count-based, date-bounded, or non-ending ranges. Calendar recurrence is emitted as PidLidAppointmentRecur/AppointmentRecurrencePattern with RecurrenceType, Recurring, IsRecurring, ClipStart/ClipEnd and optional deleted occurrences; Task recurrence uses PidLidTaskRecurrence and PidLidTaskFRecurring. Modified appointment exceptions (ExceptionInfo/ExtendedException) remain a future extension.
+
+The meeting transport workflow is also implemented: IPM.Schedule.Meeting.Request, accepted/tentative/declined responses, and IPM.Schedule.Meeting.Canceled share a spec-shaped GlobalObjectId/CleanGlobalObjectId and preserve sequence, start/end, owner appointment ID, meeting type, response status, location and recurrence metadata. The libpff system suite round-trips the recurrence blobs and these meeting objects through the format-neutral mailbox model.
 
 Windows interoperability tooling is included under scripts/windows/ plus a manual Windows Outlook Interop workflow. The normal CI validates the Windows fixture generator and PowerShell syntax on windows-latest. Real SCANPST/classic-Outlook validation requires a dedicated self-hosted Windows runner with classic Outlook installed and a configured Outlook profile. See docs/windows-interop.md.
 
@@ -105,6 +107,7 @@ src/open_ost2pst/
     messaging.py
     nameid.py
     outlook_items.py
+    recurrence.py
     writer.py
     large_data.py
     rtf.py

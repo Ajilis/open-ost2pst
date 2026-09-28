@@ -314,6 +314,18 @@ class MessagingBuilder:
         from .outlook_items import add_meeting
         return add_meeting(self, folder, **kwargs)
 
+    def add_meeting_request(self, folder: MessagingFolder, **kwargs):
+        from .outlook_items import add_meeting_request
+        return add_meeting_request(self, folder, **kwargs)
+
+    def add_meeting_response(self, folder: MessagingFolder, **kwargs):
+        from .outlook_items import add_meeting_response
+        return add_meeting_response(self, folder, **kwargs)
+
+    def add_meeting_cancellation(self, folder: MessagingFolder, **kwargs):
+        from .outlook_items import add_meeting_cancellation
+        return add_meeting_cancellation(self, folder, **kwargs)
+
     def add_contact(self, folder: MessagingFolder, **kwargs):
         from .outlook_items import add_contact
         return add_contact(self, folder, **kwargs)
