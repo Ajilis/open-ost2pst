@@ -1,0 +1,123 @@
+name: Windows Release
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/release-windows.yml"
+      - "pyproject.toml"
+      - "src/open_ost2pst/**"
+      - "scripts/generate_windows_interop_fixture.py"
+      - "docs/release-v0.1.0.md"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/release-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-exe:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Windows build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[build-windows]"
+          python -c "import pypff; print('pypff:', pypff.__file__)"
+
+      - name: Resolve release version
+        shell: pwsh
+        run: |
+          $version = python -c "import open_ost2pst; print(open_ost2pst.__version__)"
+          if (-not $version) { throw "Could not determine package version" }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TAG=v$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Building version $version"
+
+      - name: Build CLI executable
+        shell: pwsh
+        run: python -m PyInstaller --clean --noconfirm --onefile --console --name open-ost2pst-cli --hidden-import pypff --distpath dist --workpath build/cli --specpath build/spec src/open_ost2pst/__main__.py
+
+      - name: Build GUI executable
+        shell: pwsh
+        run: python -m PyInstaller --clean --noconfirm --onefile --windowed --name open-ost2pst --hidden-import pypff --distpath dist --workpath build/gui --specpath build/spec src/open_ost2pst/gui.py
+
+      - name: Smoke-test CLI bundle
+        shell: pwsh
+        run: |
+          $reported = (& .\dist\open-ost2pst-cli.exe --version).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "CLI --version failed with exit code $LASTEXITCODE" }
+          if ($reported -ne $env:VERSION) { throw "CLI version mismatch: expected $env:VERSION, got $reported" }
+
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          python scripts/generate_windows_interop_fixture.py --output artifacts/source.pst --manifest artifacts/source.expected.json
+
+          & .\dist\open-ost2pst-cli.exe inspect artifacts/source.pst --json
+          if ($LASTEXITCODE -ne 0) { throw "Frozen CLI inspect failed with exit code $LASTEXITCODE" }
+
+          & .\dist\open-ost2pst-cli.exe convert artifacts/source.pst artifacts/converted.pst --report artifacts/conversion.report.json
+          if ($LASTEXITCODE -ne 0) { throw "Frozen CLI convert failed with exit code $LASTEXITCODE" }
+
+          & .\dist\open-ost2pst-cli.exe verify artifacts/converted.pst --source artifacts/source.pst --report artifacts/verify.report.json
+          if ($LASTEXITCODE -ne 0) { throw "Frozen CLI verify failed with exit code $LASTEXITCODE" }
+
+      - name: Smoke-test GUI bundle
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath .\dist\open-ost2pst.exe -ArgumentList "--self-test" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Frozen GUI self-test failed with exit code $($process.ExitCode)" }
+
+      - name: Generate SHA-256 checksums
+        shell: pwsh
+        run: |
+          $files = @("dist/open-ost2pst.exe", "dist/open-ost2pst-cli.exe")
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $([System.IO.Path]::GetFileName($file))"
+          }
+          $lines | Set-Content -LiteralPath SHA256SUMS.txt -Encoding ascii
+          Get-Content SHA256SUMS.txt
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-ost2pst-windows-v${{ env.VERSION }}
+          path: |
+            dist/open-ost2pst.exe
+            dist/open-ost2pst-cli.exe
+            SHA256SUMS.txt
+            artifacts/conversion.report.json
+            artifacts/verify.report.json
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view $env:TAG --repo $env:GITHUB_REPOSITORY *> $null
+          $releaseExists = $LASTEXITCODE -eq 0
+
+          if ($releaseExists) {
+            gh release upload $env:TAG dist/open-ost2pst.exe dist/open-ost2pst-cli.exe SHA256SUMS.txt --clobber --repo $env:GITHUB_REPOSITORY
+          }
+          else {
+            gh release create $env:TAG dist/open-ost2pst.exe dist/open-ost2pst-cli.exe SHA256SUMS.txt --target $env:GITHUB_SHA --title "Open OST2PST $env:TAG" --notes-file docs/release-v0.1.0.md --prerelease --repo $env:GITHUB_REPOSITORY
+          }
+
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release publication failed with exit code $LASTEXITCODE" }
