@@ -25,6 +25,12 @@ LAST_NAMED_PROPERTY_ID = 0x8FFF
 PS_MAPI = UUID("00020328-0000-0000-c000-000000000046")
 PS_PUBLIC_STRINGS = UUID("00020329-0000-0000-c000-000000000046")
 
+# Compatibility sentinel. Older libpff releases reject a Name-to-ID PC whose
+# Entry, String or GUID streams are empty. Reserving one private named
+# property keeps all three streams non-empty without affecting user data.
+RESERVED_COMPAT_GUID = UUID("7c3f6f8e-cc5c-4ff8-9d5d-2f80a640f0b1")
+RESERVED_COMPAT_NAME = "__open_ost2pst_reserved__"
+
 
 @dataclass(frozen=True, slots=True)
 class NameIdRecord:
@@ -105,14 +111,25 @@ class NameIdMap:
         pc = PropertyContext()
         pc.set_integer32(PR_NAMEID_BUCKET_COUNT, self.bucket_count)
 
-        guid_stream, guid_indices = self._build_guid_stream()
+        serialized_properties = (
+            NamedProperty(
+                property_id=FIRST_NAMED_PROPERTY_ID,
+                guid=RESERVED_COMPAT_GUID,
+                name=RESERVED_COMPAT_NAME,
+            ),
+            *self._properties,
+        )
+
+        guid_stream, guid_indices = self._build_guid_stream(
+            serialized_properties
+        )
         string_stream = bytearray()
         entry_stream = bytearray()
         buckets: list[bytearray] = [
             bytearray() for _ in range(self.bucket_count)
         ]
 
-        for property_index, prop in enumerate(self._properties):
+        for property_index, prop in enumerate(serialized_properties):
             is_string = isinstance(prop.name, str)
             guid_index = _guid_index(prop.guid, guid_indices, is_string)
 
@@ -177,7 +194,9 @@ class NameIdMap:
         if existing is not None:
             return existing
 
-        property_index = len(self._properties)
+        # Property index 0 / property ID 0x8000 is reserved for the
+        # compatibility sentinel serialized into every map.
+        property_index = len(self._properties) + 1
         property_id = FIRST_NAMED_PROPERTY_ID + property_index
         if property_id > LAST_NAMED_PROPERTY_ID:
             raise OverflowError("PST named-property ID range exhausted")
@@ -195,11 +214,14 @@ class NameIdMap:
         self._lookup[key] = property_id
         return property_id
 
-    def _build_guid_stream(self) -> tuple[bytes, dict[UUID, int]]:
+    def _build_guid_stream(
+        self,
+        properties: tuple[NamedProperty, ...],
+    ) -> tuple[bytes, dict[UUID, int]]:
         custom: list[UUID] = []
         indices: dict[UUID, int] = {}
 
-        for prop in self._properties:
+        for prop in properties:
             guid = prop.guid
             if guid is None or guid in (PS_MAPI, PS_PUBLIC_STRINGS):
                 continue
