@@ -75,6 +75,8 @@ Large variable properties, multi-block HN streams, large Row Matrices, zero-leng
 
 Generated PSTs now include the standard physical minimum hierarchy (Root Folder, IPM subtree, Deleted Items, Search Root, and Spam Search Folder) while the format-neutral mailbox model continues to expose the IPM subtree as its logical root. The writer also emits the Name-to-ID Map and supports real named properties in the 0x8000–0x8FFF range. Property ID 0x8000 is reserved internally as a compatibility sentinel so old libpff releases can parse non-empty NameID streams; user named properties are allocated from 0x8001.
 
+Advanced mail metadata is preserved for message class, Internet Message-ID, transport headers, conversation topic/index, importance, sensitivity, and attachment MIME Content-ID/Content-Location. Embedded-message attachments are emitted as afEmbeddedMessage with a PtypObject reference to a nested message subnode. The pypff Python bindings do not expose libpff_attachment_get_item(), so source-side extraction of the nested embedded-message content is currently reported as a non-fatal limitation even though the attachment method/object structure is written and validated.
+
 Windows interoperability tooling is included under scripts/windows/ plus a manual Windows Outlook Interop workflow. The normal CI validates the Windows fixture generator and PowerShell syntax on windows-latest. Real SCANPST/classic-Outlook validation requires a dedicated self-hosted Windows runner with classic Outlook installed and a configured Outlook profile. See docs/windows-interop.md.
 
 ## Project layout
