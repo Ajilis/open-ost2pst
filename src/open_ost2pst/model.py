@@ -14,6 +14,9 @@ class Attachment:
     filename: str | None = None
     data: bytes = b""
     mime_type: str | None = None
+    content_id: str | None = None
+    content_location: str | None = None
+    embedded_message: "Message | None" = None
 
 
 @dataclass(slots=True)
@@ -31,6 +34,13 @@ class Message:
     body_text: str | None = None
     body_html: str | None = None
     body_rtf: bytes | None = None
+    message_class: str | None = None
+    internet_message_id: str | None = None
+    transport_headers: str | None = None
+    conversation_topic: str | None = None
+    conversation_index: bytes | None = None
+    importance: int | None = None
+    sensitivity: int | None = None
     delivery_time: datetime | None = None
     creation_time: datetime | None = None
     is_read: bool | None = None

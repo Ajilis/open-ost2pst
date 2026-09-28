@@ -168,3 +168,93 @@ def test_comparison_detects_rtf_hash_change() -> None:
     )
     assert count == 2
     assert truncated is False
+
+
+
+def test_manifest_contains_advanced_message_and_attachment_metadata() -> None:
+    mailbox = _mailbox()
+    message = mailbox.root.folders[0].messages[0]
+    message.message_class = "IPM.Note.Custom"
+    message.internet_message_id = "<message@example.com>"
+    message.transport_headers = "Message-ID: <message@example.com>\r\n"
+    message.conversation_topic = "Conversation"
+    message.conversation_index = b"conversation-index"
+    message.importance = 2
+    message.sensitivity = 2
+
+    attachment = message.attachments[0]
+    attachment.mime_type = "application/octet-stream"
+    attachment.content_id = "part@example.com"
+    attachment.content_location = "parts/data.bin"
+
+    manifest = build_manifest(mailbox)
+    fingerprint = manifest.folders[1].messages[0]
+
+    assert fingerprint.message_class == "IPM.Note.Custom"
+    assert fingerprint.internet_message_id == "<message@example.com>"
+    assert len(fingerprint.transport_headers_sha256) == 64
+    assert fingerprint.conversation_topic == "Conversation"
+    assert len(fingerprint.conversation_index_sha256) == 64
+    assert fingerprint.importance == 2
+    assert fingerprint.sensitivity == 2
+
+    attachment_fingerprint = fingerprint.attachments[0]
+    assert attachment_fingerprint.mime_type == "application/octet-stream"
+    assert attachment_fingerprint.content_id == "part@example.com"
+    assert attachment_fingerprint.content_location == "parts/data.bin"
+
+
+def test_comparison_detects_advanced_metadata_changes() -> None:
+    source = _mailbox()
+    destination = _mailbox()
+
+    source_message = source.root.folders[0].messages[0]
+    destination_message = destination.root.folders[0].messages[0]
+
+    source_message.internet_message_id = "<source@example.com>"
+    destination_message.internet_message_id = "<destination@example.com>"
+    source_message.importance = 2
+    destination_message.importance = 0
+
+    source_attachment = source_message.attachments[0]
+    destination_attachment = destination_message.attachments[0]
+    source_attachment.content_id = "source-part@example.com"
+    destination_attachment.content_id = "destination-part@example.com"
+
+    mismatches, count, truncated = compare_manifests(
+        build_manifest(source),
+        build_manifest(destination),
+    )
+
+    fields = {(item.kind, item.field) for item in mismatches}
+    assert ("message", "internet_message_id") in fields
+    assert ("message", "importance") in fields
+    assert ("attachment", "content_id") in fields
+    assert count == 3
+    assert truncated is False
+
+
+def test_missing_optional_advanced_metadata_is_not_required_to_match() -> None:
+    source = _mailbox()
+    destination = _mailbox()
+
+    destination_message = destination.root.folders[0].messages[0]
+    destination_message.message_class = "IPM.Note"
+    destination_message.internet_message_id = "<generated@example.com>"
+    destination_message.conversation_topic = "Generated"
+    destination_message.importance = 1
+    destination_message.sensitivity = 0
+
+    destination_attachment = destination_message.attachments[0]
+    destination_attachment.mime_type = "application/octet-stream"
+    destination_attachment.content_id = "generated@example.com"
+    destination_attachment.content_location = "generated/data.bin"
+
+    mismatches, count, truncated = compare_manifests(
+        build_manifest(source),
+        build_manifest(destination),
+    )
+
+    assert mismatches == ()
+    assert count == 0
+    assert truncated is False

@@ -12,6 +12,13 @@ from typing import Any
 from open_ost2pst.model import Attachment, Folder, Mailbox, Message, Recipient
 
 # Common MAPI property IDs used by Outlook message/recipient/attachment rows.
+PR_IMPORTANCE = 0x0017
+PR_MESSAGE_CLASS = 0x001A
+PR_SENSITIVITY = 0x0036
+PR_CONVERSATION_TOPIC = 0x0070
+PR_CONVERSATION_INDEX = 0x0071
+PR_TRANSPORT_MESSAGE_HEADERS = 0x007D
+PR_INTERNET_MESSAGE_ID = 0x1035
 PR_DISPLAY_NAME = 0x3001
 PR_EMAIL_ADDRESS = 0x3003
 PR_RECIPIENT_TYPE = 0x0C15
@@ -19,11 +26,15 @@ PR_SENDER_EMAIL_ADDRESS = 0x0C1F
 PR_MESSAGE_FLAGS = 0x0E07
 PR_ATTACH_FILENAME = 0x3704
 PR_ATTACH_LONG_FILENAME = 0x3707
+PR_ATTACH_METHOD = 0x3705
 PR_ATTACH_MIME_TAG = 0x370E
+PR_ATTACH_CONTENT_ID = 0x3712
+PR_ATTACH_CONTENT_LOCATION = 0x3713
 PR_SMTP_ADDRESS = 0x39FE
 PR_SENDER_SMTP_ADDRESS = 0x5D01
 
 MESSAGE_FLAG_READ = 0x00000001
+ATTACH_EMBEDDED_MESSAGE = 5
 RECIPIENT_TYPES = {1: "to", 2: "cc", 3: "bcc"}
 
 NID_ROOT_FOLDER = 0x0122
@@ -117,10 +128,22 @@ def _entry(obj: Any, property_id: int) -> Any | None:
     if record_set is None:
         return None
 
-    try:
-        return record_set.get_entry_by_type(property_id)
-    except Exception:
-        return None
+    if hasattr(record_set, "get_entry_by_type"):
+        try:
+            return record_set.get_entry_by_type(property_id)
+        except Exception:
+            return None
+
+    count = _int_attr(record_set, "number_of_entries")
+    for index in range(count):
+        try:
+            entry = record_set.get_entry(index)
+        except Exception:
+            continue
+        if _int_attr(entry, "entry_type") == property_id:
+            return entry
+
+    return None
 
 
 def _property_string(obj: Any, property_id: int) -> str | None:
@@ -153,6 +176,26 @@ def _property_integer(obj: Any, property_id: int) -> int | None:
     try:
         return int(value)
     except (TypeError, ValueError):
+        return None
+
+
+def _property_binary(obj: Any, property_id: int) -> bytes | None:
+    entry = _entry(obj, property_id)
+    if entry is None:
+        return None
+
+    value = _safe_attr(entry, "data")
+    if value is None:
+        try:
+            value = entry.get_data()
+        except Exception:
+            return None
+
+    if value is None:
+        return None
+    try:
+        return bytes(value)
+    except Exception:
         return None
 
 
@@ -282,7 +325,10 @@ def _attachment_data(attachment: Any) -> bytes:
     return b"".join(chunks)
 
 
-def _extract_attachment(attachment: Any) -> Attachment:
+def _extract_attachment(
+    attachment: Any,
+    report: ExtractionReport,
+) -> Attachment:
     filename = _safe_attr(attachment, "long_filename")
     if not filename:
         filename = (
@@ -294,10 +340,40 @@ def _extract_attachment(attachment: Any) -> Attachment:
     if not mime_type and filename:
         mime_type = mimetypes.guess_type(str(filename))[0]
 
+    method = _property_integer(attachment, PR_ATTACH_METHOD)
+    embedded_message = None
+
+    if method == ATTACH_EMBEDDED_MESSAGE:
+        embedded_item = None
+        try:
+            if _int_attr(attachment, "number_of_sub_items") > 0:
+                embedded_item = attachment.get_sub_item(0)
+            else:
+                embedded_item = attachment.get_sub_item(0)
+        except Exception:
+            embedded_item = None
+
+        if embedded_item is not None:
+            embedded_message = _extract_message(embedded_item, report)
+        else:
+            report.warn(
+                f"embedded attachment {filename!r} could not expose its message"
+            )
+
     return Attachment(
         filename=str(filename) if filename else None,
-        data=_attachment_data(attachment),
+        data=(
+            b""
+            if embedded_message is not None
+            else _attachment_data(attachment)
+        ),
         mime_type=mime_type,
+        content_id=_property_string(attachment, PR_ATTACH_CONTENT_ID),
+        content_location=_property_string(
+            attachment,
+            PR_ATTACH_CONTENT_LOCATION,
+        ),
+        embedded_message=embedded_message,
     )
 
 
@@ -313,6 +389,11 @@ def _normalize_rtf_body(value: Any) -> bytes | None:
 def _extract_message(message: Any, report: ExtractionReport) -> Message:
     flags = _property_integer(message, PR_MESSAGE_FLAGS)
 
+    transport_headers = (
+        _property_string(message, PR_TRANSPORT_MESSAGE_HEADERS)
+        or _decode_body(_safe_attr(message, "transport_headers"))
+    )
+
     result = Message(
         subject=_safe_attr(message, "subject"),
         sender_name=_safe_attr(message, "sender_name"),
@@ -320,6 +401,25 @@ def _extract_message(message: Any, report: ExtractionReport) -> Message:
         body_text=_decode_body(_safe_attr(message, "plain_text_body")),
         body_html=_decode_body(_safe_attr(message, "html_body")),
         body_rtf=_normalize_rtf_body(_safe_attr(message, "rtf_body")),
+        message_class=(
+            _property_string(message, PR_MESSAGE_CLASS)
+            or _safe_attr(message, "message_class")
+        ),
+        internet_message_id=_property_string(
+            message,
+            PR_INTERNET_MESSAGE_ID,
+        ),
+        transport_headers=transport_headers,
+        conversation_topic=_property_string(
+            message,
+            PR_CONVERSATION_TOPIC,
+        ),
+        conversation_index=_property_binary(
+            message,
+            PR_CONVERSATION_INDEX,
+        ),
+        importance=_property_integer(message, PR_IMPORTANCE),
+        sensitivity=_property_integer(message, PR_SENSITIVITY),
         delivery_time=_datetime_attr(message, "delivery_time"),
         creation_time=_datetime_attr(message, "creation_time"),
         is_read=bool(flags & MESSAGE_FLAG_READ) if flags is not None else None,
@@ -332,7 +432,9 @@ def _extract_message(message: Any, report: ExtractionReport) -> Message:
     for index in range(attachment_count):
         try:
             attachment = message.get_attachment(index)
-            result.attachments.append(_extract_attachment(attachment))
+            result.attachments.append(
+                _extract_attachment(attachment, report)
+            )
             report.attachments_loaded += 1
         except Exception as exc:
             report.attachments_failed += 1

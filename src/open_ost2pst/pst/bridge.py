@@ -14,6 +14,7 @@ from .messaging import (
     RECIPIENT_TYPE_TO,
     MessagingBuilder,
     MessagingFolder,
+    MessagingMessage,
 )
 
 
@@ -130,6 +131,24 @@ def _copy_message(
     builder: MessagingBuilder,
     report: WriteReport,
 ) -> None:
+    target = builder.add_message(
+        folder,
+        **_message_kwargs(source, report),
+    )
+    _copy_message_children(
+        source,
+        target,
+        builder,
+        report,
+        count_for_report=True,
+    )
+    report.messages_written += 1
+
+
+def _message_kwargs(
+    source: Message,
+    report: WriteReport,
+) -> dict[str, Any]:
     to_values = [
         _recipient_label(recipient)
         for recipient in source.recipients
@@ -153,25 +172,40 @@ def _copy_message(
         created = None
         report.warn(f"creation time skipped for {source.subject!r}: {exc}")
 
-    target = builder.add_message(
-        folder,
-        subject=source.subject or "",
-        body=source.body_text or "",
-        sender_name=source.sender_name or "",
-        sender_email=source.sender_email or "",
-        display_to="; ".join(value for value in to_values if value),
-        display_cc="; ".join(value for value in cc_values if value),
-        html_body=(
+    return {
+        "subject": source.subject or "",
+        "body": source.body_text or "",
+        "sender_name": source.sender_name or "",
+        "sender_email": source.sender_email or "",
+        "display_to": "; ".join(value for value in to_values if value),
+        "display_cc": "; ".join(value for value in cc_values if value),
+        "html_body": (
             source.body_html.encode("utf-8")
             if source.body_html is not None
             else None
         ),
-        rtf_body=source.body_rtf,
-        delivery_filetime=delivery,
-        creation_filetime=created,
-        is_read=True if source.is_read is None else source.is_read,
-    )
+        "rtf_body": source.body_rtf,
+        "message_class": source.message_class or "IPM.Note",
+        "internet_message_id": source.internet_message_id,
+        "transport_headers": source.transport_headers,
+        "conversation_topic": source.conversation_topic,
+        "conversation_index": source.conversation_index,
+        "importance": 1 if source.importance is None else source.importance,
+        "sensitivity": 0 if source.sensitivity is None else source.sensitivity,
+        "delivery_filetime": delivery,
+        "creation_filetime": created,
+        "is_read": True if source.is_read is None else source.is_read,
+    }
 
+
+def _copy_message_children(
+    source: Message,
+    target: MessagingMessage,
+    builder: MessagingBuilder,
+    report: WriteReport,
+    *,
+    count_for_report: bool,
+) -> None:
     for recipient in source.recipients:
         recipient_type = _recipient_type(recipient, report)
         builder.add_recipient(
@@ -180,18 +214,35 @@ def _copy_message(
             email=recipient.email or "",
             recipient_type=recipient_type,
         )
-        report.recipients_written += 1
+        if count_for_report:
+            report.recipients_written += 1
 
     for attachment in source.attachments:
+        embedded_target = None
+        if attachment.embedded_message is not None:
+            embedded_target = MessagingMessage(
+                nid=0,
+                **_message_kwargs(attachment.embedded_message, report),
+            )
+            _copy_message_children(
+                attachment.embedded_message,
+                embedded_target,
+                builder,
+                report,
+                count_for_report=False,
+            )
+
         builder.add_attachment(
             target,
             filename=attachment.filename or "attachment.bin",
             data=attachment.data,
             mime_type=attachment.mime_type,
+            content_id=attachment.content_id,
+            content_location=attachment.content_location,
+            embedded_message=embedded_target,
         )
-        report.attachments_written += 1
-
-    report.messages_written += 1
+        if count_for_report:
+            report.attachments_written += 1
 
 
 def _recipient_label(recipient: Recipient) -> str:

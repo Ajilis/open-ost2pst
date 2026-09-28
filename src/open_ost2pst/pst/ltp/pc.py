@@ -23,6 +23,7 @@ class PropertyType(IntEnum):
     FLOAT32 = 0x0004
     FLOAT64 = 0x0005
     BOOLEAN = 0x000B
+    OBJECT = 0x000D
     INTEGER64 = 0x0014
     STRING8 = 0x001E
     UNICODE = 0x001F
@@ -170,6 +171,22 @@ class PropertyContext:
             property_id,
             PropertyType.BINARY,
             bytes(value),
+        )
+
+    def set_object(
+        self,
+        property_id: int,
+        nid: int,
+        size: int = 0,
+    ) -> None:
+        if not 0 <= nid <= 0xFFFFFFFF:
+            raise ValueError("object NID must fit in 32 bits")
+        if not 0 <= size <= 0xFFFFFFFF:
+            raise ValueError("object size must fit in 32 bits")
+        self._set_variable(
+            property_id,
+            PropertyType.OBJECT,
+            struct.pack("<II", nid, size),
         )
 
     def set_guid(
