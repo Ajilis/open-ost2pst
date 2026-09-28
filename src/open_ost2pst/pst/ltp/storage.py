@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from open_ost2pst.binary_payload import BinaryData
+
 from ..primitives import NidType, make_nid
 
 
@@ -12,7 +14,7 @@ class ExternalValue:
     """One HNID-backed value stored as a local LTP subnode."""
 
     nid: int
-    data: bytes
+    data: BinaryData
 
 
 class LtpNidAllocator:
