@@ -65,6 +65,7 @@ def mailbox_to_messaging(
         store_name=store_name,
         root_name=mailbox.root.name,
     )
+    builder.root.container_class = mailbox.root.container_class or "IPF.Note"
 
     _copy_folder_contents(
         mailbox.root,
@@ -117,6 +118,7 @@ def _copy_folder_contents(
             child_destination = builder.add_folder(
                 destination,
                 child.name,
+                container_class=child.container_class or "IPF.Note",
             )
         _copy_folder_contents(
             child,
@@ -199,6 +201,53 @@ def _message_kwargs(
     }
 
 
+def _copy_standard_properties(
+    source: Message,
+    target: MessagingMessage,
+    builder: MessagingBuilder,
+    report: WriteReport,
+) -> None:
+    for prop in source.standard_properties:
+        try:
+            property_type = PropertyType(prop.property_type)
+        except ValueError:
+            report.warn(
+                "unsupported standard property type "
+                f"{prop.property_type:#06x} skipped for {source.subject!r}"
+            )
+            continue
+
+        value = prop.value
+        if property_type == PropertyType.SYSTIME:
+            if not isinstance(value, datetime):
+                report.warn(
+                    "standard SYSTIME property skipped because its value "
+                    f"is not datetime for {source.subject!r}"
+                )
+                continue
+            try:
+                value = datetime_to_filetime(value)
+            except ValueError as exc:
+                report.warn(
+                    f"standard SYSTIME property skipped for "
+                    f"{source.subject!r}: {exc}"
+                )
+                continue
+
+        try:
+            builder.set_property(
+                target,
+                prop.property_id,
+                value,
+                property_type=property_type,
+            )
+        except (TypeError, ValueError, OverflowError) as exc:
+            report.warn(
+                f"standard property {prop.property_id:#06x} skipped for "
+                f"{source.subject!r}: {exc}"
+            )
+
+
 def _copy_named_properties(
     source: Message,
     target: MessagingMessage,
@@ -255,6 +304,7 @@ def _copy_message_children(
     *,
     count_for_report: bool,
 ) -> None:
+    _copy_standard_properties(source, target, builder, report)
     _copy_named_properties(source, target, builder, report)
 
     for recipient in source.recipients:
