@@ -261,7 +261,7 @@ class PropertyContext:
         self,
         property_id: int,
         property_type: PropertyType,
-        data: BinaryData,
+        data: bytes,
     ) -> None:
         self._validate_property_id(property_id)
         if property_type not in _FIXED_INLINE_TYPES:
@@ -278,7 +278,7 @@ class PropertyContext:
         self,
         property_id: int,
         property_type: PropertyType,
-        data: bytes,
+        data: BinaryData,
     ) -> None:
         self._validate_property_id(property_id)
         self._properties[property_id] = _PropertyValue(
