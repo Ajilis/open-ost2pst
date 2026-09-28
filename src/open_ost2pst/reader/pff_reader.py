@@ -128,10 +128,22 @@ def _entry(obj: Any, property_id: int) -> Any | None:
     if record_set is None:
         return None
 
-    try:
-        return record_set.get_entry_by_type(property_id)
-    except Exception:
-        return None
+    if hasattr(record_set, "get_entry_by_type"):
+        try:
+            return record_set.get_entry_by_type(property_id)
+        except Exception:
+            return None
+
+    count = _int_attr(record_set, "number_of_entries")
+    for index in range(count):
+        try:
+            entry = record_set.get_entry(index)
+        except Exception:
+            continue
+        if _int_attr(entry, "entry_type") == property_id:
+            return entry
+
+    return None
 
 
 def _property_string(obj: Any, property_id: int) -> str | None:
