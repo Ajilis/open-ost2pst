@@ -252,3 +252,91 @@ def test_normalize_rtf_body_removes_pypff_terminal_null() -> None:
         b"{\\rtf1\\ansi test}"
     ) == b"{\\rtf1\\ansi test}"
     assert pff_reader._normalize_rtf_body(None) is None
+
+
+class LegacyFakeEntry:
+    def __init__(
+        self,
+        entry_type,
+        *,
+        string=None,
+        integer=None,
+        data=None,
+    ):
+        self._entry_type = entry_type
+        self._string = string
+        self._integer = integer
+        self._data = data
+
+    def get_entry_type(self):
+        return self._entry_type
+
+    def get_data_as_string(self):
+        return self._string
+
+    def get_data_as_integer(self):
+        return self._integer
+
+    def get_data(self):
+        return self._data
+
+
+class LegacyFakeRecordSet:
+    def __init__(self, entries):
+        self._entries = list(entries)
+
+    def get_number_of_entries(self):
+        return len(self._entries)
+
+    def get_entry(self, index):
+        return self._entries[index]
+
+
+class LegacyFakeItem:
+    def __init__(self, entries):
+        self._record_set = LegacyFakeRecordSet(entries)
+
+    def get_record_set(self, index):
+        assert index == 0
+        return self._record_set
+
+
+def test_entry_supports_legacy_pypff_getter_api() -> None:
+    item = LegacyFakeItem(
+        [
+            LegacyFakeEntry(
+                pff_reader.PR_MESSAGE_CLASS,
+                string="IPM.Note.Custom",
+            ),
+            LegacyFakeEntry(
+                pff_reader.PR_IMPORTANCE,
+                integer=2,
+            ),
+            LegacyFakeEntry(
+                pff_reader.PR_CONVERSATION_INDEX,
+                data=b"conversation-index",
+            ),
+        ]
+    )
+
+    assert (
+        pff_reader._property_string(
+            item,
+            pff_reader.PR_MESSAGE_CLASS,
+        )
+        == "IPM.Note.Custom"
+    )
+    assert (
+        pff_reader._property_integer(
+            item,
+            pff_reader.PR_IMPORTANCE,
+        )
+        == 2
+    )
+    assert (
+        pff_reader._property_binary(
+            item,
+            pff_reader.PR_CONVERSATION_INDEX,
+        )
+        == b"conversation-index"
+    )
