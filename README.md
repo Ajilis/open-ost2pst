@@ -56,6 +56,29 @@ pytest
 
 The OST reader expects the Python bindings for libpff to be installed separately and importable as `pypff`.
 
+## Windows GUI
+
+A standalone Windows x64 GUI is built in CI as the artifact `OpenOST2PST-Windows-x64`.
+It lets users select the source OST/PST, choose a destination directory, set the
+PST filename, follow a real 0-100% progress bar, and optionally write a JSON
+conversion report. The generated PST is automatically reopened and verified.
+
+Local Python launch:
+
+```bash
+open-ost2pst-gui
+```
+
+Local Windows executable build:
+
+```powershell
+python -m pip install -e ".[dev,windows,build-windows]"
+.\scripts\windows\build_gui.ps1
+```
+
+The resulting executable is `dist\OpenOST2PST.exe`. See
+`docs/windows-gui.md` for details.
+
 ## CLI
 
 ```bash
@@ -98,6 +121,8 @@ Windows interoperability tooling is included under scripts/windows/ plus a manua
 ```text
 src/open_ost2pst/
   cli.py
+  conversion.py
+  gui.py
   model.py
   verification.py
   reader/
@@ -123,8 +148,10 @@ scripts/
   windows/
     validate_scanpst.ps1
     validate_outlook.ps1
+    build_gui.ps1
 docs/
   windows-interop.md
+  windows-gui.md
 ```
 
 ## References
