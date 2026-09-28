@@ -77,6 +77,8 @@ Generated PSTs now include the standard physical minimum hierarchy (Root Folder,
 
 Advanced mail metadata is preserved for message class, Internet Message-ID, transport headers, conversation topic/index, importance, sensitivity, and attachment MIME Content-ID/Content-Location. Embedded-message attachments are emitted as afEmbeddedMessage with a PtypObject reference to a nested message subnode. The pypff Python bindings do not expose libpff_attachment_get_item(), so source-side extraction of the nested embedded-message content is currently reported as a non-fatal limitation even though the attachment method/object structure is written and validated.
 
+Named properties are now read from the source Name-to-ID map by their portable identity (GUID plus string name or LID), normalized into the mailbox model, and remapped into the destination PST instead of copying store-local 0x8000-0x8FFF IDs. This preserves common Outlook calendar, contact, and task metadata. CI round-trips IPM.Appointment, IPM.Contact, and IPM.Task objects including Unicode strings, PtypTime values, 32-bit integers, booleans, and binary blobs. Examples include appointment location/start time/duration/all-day state/time-zone data, contact address data, and task assignment data. Multi-valued MAPI named-property types remain future work.
+
 Windows interoperability tooling is included under scripts/windows/ plus a manual Windows Outlook Interop workflow. The normal CI validates the Windows fixture generator and PowerShell syntax on windows-latest. Real SCANPST/classic-Outlook validation requires a dedicated self-hosted Windows runner with classic Outlook installed and a configured Outlook profile. See docs/windows-interop.md.
 
 ## Project layout
