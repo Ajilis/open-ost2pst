@@ -27,6 +27,13 @@ class Recipient:
 
 
 @dataclass(slots=True)
+class StandardPropertyValue:
+    property_id: int
+    property_type: int
+    value: Any
+
+
+@dataclass(slots=True)
 class NamedPropertyValue:
     guid: str | None
     name: str | int
@@ -54,12 +61,16 @@ class Message:
     is_read: bool | None = None
     recipients: list[Recipient] = field(default_factory=list)
     attachments: list[Attachment] = field(default_factory=list)
+    standard_properties: list[StandardPropertyValue] = field(
+        default_factory=list
+    )
     named_properties: list[NamedPropertyValue] = field(default_factory=list)
 
 
 @dataclass(slots=True)
 class Folder:
     name: str
+    container_class: str | None = None
     messages: list[Message] = field(default_factory=list)
     folders: list["Folder"] = field(default_factory=list)
 

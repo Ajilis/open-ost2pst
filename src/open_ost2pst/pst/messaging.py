@@ -51,6 +51,7 @@ PR_STORE_SUPPORT_MASK = 0x340D
 PR_CONTENT_COUNT = 0x3602
 PR_CONTENT_UNREAD = 0x3603
 PR_SUBFOLDERS = 0x360A
+PR_CONTAINER_CLASS = 0x3613
 PR_ATTACH_DATA = 0x3701
 PR_ATTACH_FILENAME = 0x3704
 PR_ATTACH_METHOD = 0x3705
@@ -111,6 +112,9 @@ class MessagingMessage:
     is_read: bool = True
     recipients: list[MessagingRecipient] = field(default_factory=list)
     attachments: list[MessagingAttachment] = field(default_factory=list)
+    standard_properties: dict[int, tuple[PropertyType, object]] = field(
+        default_factory=dict
+    )
     named_properties: dict[int, tuple[PropertyType, object]] = field(
         default_factory=dict
     )
@@ -120,6 +124,7 @@ class MessagingMessage:
 class MessagingFolder:
     nid: int
     name: str
+    container_class: str | None = "IPF.Note"
     folders: list["MessagingFolder"] = field(default_factory=list)
     messages: list[MessagingMessage] = field(default_factory=list)
 
@@ -172,12 +177,51 @@ class MessagingBuilder:
         self,
         parent: MessagingFolder,
         name: str,
+        *,
+        container_class: str | None = "IPF.Note",
     ) -> MessagingFolder:
         nid = make_nid(NidType.NORMAL_FOLDER, self._next_folder_index)
         self._next_folder_index += 1
-        folder = MessagingFolder(nid=nid, name=name)
+        folder = MessagingFolder(
+            nid=nid,
+            name=name,
+            container_class=container_class,
+        )
         parent.folders.append(folder)
         return folder
+
+    def add_calendar_folder(
+        self,
+        parent: MessagingFolder,
+        name: str = "Calendar",
+    ) -> MessagingFolder:
+        return self.add_folder(
+            parent,
+            name,
+            container_class="IPF.Appointment",
+        )
+
+    def add_contacts_folder(
+        self,
+        parent: MessagingFolder,
+        name: str = "Contacts",
+    ) -> MessagingFolder:
+        return self.add_folder(
+            parent,
+            name,
+            container_class="IPF.Contact",
+        )
+
+    def add_tasks_folder(
+        self,
+        parent: MessagingFolder,
+        name: str = "Tasks",
+    ) -> MessagingFolder:
+        return self.add_folder(
+            parent,
+            name,
+            container_class="IPF.Task",
+        )
 
     def register_named_string(
         self,
@@ -246,6 +290,37 @@ class MessagingBuilder:
         )
         folder.messages.append(message)
         return message
+
+    def set_property(
+        self,
+        message: MessagingMessage,
+        property_id: int,
+        value: object,
+        *,
+        property_type: int | PropertyType,
+    ) -> None:
+        if not 0 <= property_id <= 0x7FFF:
+            raise ValueError(
+                "standard property IDs must be between 0x0000 and 0x7FFF"
+            )
+        ptype = PropertyType(int(property_type))
+        message.standard_properties[property_id] = (ptype, value)
+
+    def add_appointment(self, folder: MessagingFolder, **kwargs):
+        from .outlook_items import add_appointment
+        return add_appointment(self, folder, **kwargs)
+
+    def add_meeting(self, folder: MessagingFolder, **kwargs):
+        from .outlook_items import add_meeting
+        return add_meeting(self, folder, **kwargs)
+
+    def add_contact(self, folder: MessagingFolder, **kwargs):
+        from .outlook_items import add_contact
+        return add_contact(self, folder, **kwargs)
+
+    def add_task(self, folder: MessagingFolder, **kwargs):
+        from .outlook_items import add_task
+        return add_task(self, folder, **kwargs)
 
     def set_named_property(
         self,
@@ -431,6 +506,8 @@ class MessagingBuilder:
         folder_pc.set_integer32(PR_CONTENT_COUNT, len(folder.messages))
         folder_pc.set_integer32(PR_CONTENT_UNREAD, _unread_count(folder))
         folder_pc.set_boolean(PR_SUBFOLDERS, bool(folder.folders))
+        if folder.container_class:
+            folder_pc.set_unicode(PR_CONTAINER_CLASS, folder.container_class)
         ndb.add_property_context(
             folder.nid,
             folder_pc,
@@ -570,6 +647,7 @@ def _build_hierarchy_table(folder: MessagingFolder) -> TableContext:
     table.add_column(PR_CONTENT_COUNT, 0x0003)
     table.add_column(PR_CONTENT_UNREAD, 0x0003)
     table.add_column(PR_SUBFOLDERS, 0x000B)
+    table.add_column(PR_CONTAINER_CLASS, 0x001F)
 
     for child in folder.folders:
         table.add_row(
@@ -579,6 +657,7 @@ def _build_hierarchy_table(folder: MessagingFolder) -> TableContext:
                 PR_CONTENT_COUNT: len(child.messages),
                 PR_CONTENT_UNREAD: _unread_count(child),
                 PR_SUBFOLDERS: bool(child.folders),
+                PR_CONTAINER_CLASS: child.container_class or "IPF.Note",
             },
         )
     return table
@@ -670,6 +749,9 @@ def _build_message_pc(message: MessagingMessage) -> PropertyContext:
         pc.set_filetime(PR_CLIENT_SUBMIT_TIME, message.client_submit_filetime)
     if message.creation_filetime is not None:
         pc.set_filetime(PR_CREATION_TIME, message.creation_filetime)
+
+    for property_id, (property_type, value) in message.standard_properties.items():
+        _set_pc_property(pc, property_id, property_type, value)
 
     for property_id, (property_type, value) in message.named_properties.items():
         _set_pc_property(pc, property_id, property_type, value)

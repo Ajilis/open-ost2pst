@@ -79,6 +79,16 @@ Advanced mail metadata is preserved for message class, Internet Message-ID, tran
 
 Named properties are now read from the source Name-to-ID map by their portable identity (GUID plus string name or LID), normalized into the mailbox model, and remapped into the destination PST instead of copying store-local 0x8000-0x8FFF IDs. This preserves common Outlook calendar, contact, and task metadata. CI round-trips IPM.Appointment, IPM.Contact, and IPM.Task objects including Unicode strings, PtypTime values, 32-bit integers, booleans, and binary blobs. Examples include appointment location/start time/duration/all-day state/time-zone data, contact address data, and task assignment data. Multi-valued MAPI named-property types remain future work.
 
+Outlook item fidelity now includes native Calendar, Contact, and Task objects:
+
+- Calendar folders use `IPF.Appointment`; Contacts use `IPF.Contact`; Tasks use `IPF.Task`.
+- Appointments/meetings use `IPM.Appointment` with PSETID_Appointment start/end, location, duration, all-day, busy status, meeting state, response status, organizer alias, and optional reminders.
+- Contacts use `IPM.Contact`, standard name/company/phone properties, and PSETID_Address FileUnder/Email1 properties.
+- Tasks use `IPM.Task` with PSETID_Task status, percent complete, start/due/completed dates, complete flag and owner, plus common start/end/reminder properties.
+- Folder container classes, selected standard contact properties, and all named properties survive the pypff -> Mailbox -> PST bridge.
+
+Recurring appointment/task patterns and the full meeting-request/response workflow remain future extensions; single appointments and calendar meeting objects are covered now.
+
 Windows interoperability tooling is included under scripts/windows/ plus a manual Windows Outlook Interop workflow. The normal CI validates the Windows fixture generator and PowerShell syntax on windows-latest. Real SCANPST/classic-Outlook validation requires a dedicated self-hosted Windows runner with classic Outlook installed and a configured Outlook profile. See docs/windows-interop.md.
 
 ## Project layout
@@ -94,6 +104,7 @@ src/open_ost2pst/
     bridge.py
     messaging.py
     nameid.py
+    outlook_items.py
     writer.py
     large_data.py
     rtf.py
