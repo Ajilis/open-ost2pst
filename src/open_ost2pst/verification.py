@@ -19,6 +19,9 @@ MAX_REPORTED_MISMATCHES = 1000
 class AttachmentFingerprint:
     index: int
     filename: str | None
+    mime_type: str | None
+    content_id: str | None
+    content_location: str | None
     size: int
     sha256: str
 
@@ -27,6 +30,13 @@ class AttachmentFingerprint:
 class MessageFingerprint:
     index: int
     subject: str
+    message_class: str | None
+    internet_message_id: str | None
+    transport_headers_sha256: str | None
+    conversation_topic: str | None
+    conversation_index_sha256: str | None
+    importance: int | None
+    sensitivity: int | None
     delivery_time: str | None
     creation_time: str | None
     is_read: bool | None
@@ -342,6 +352,23 @@ def _message_fingerprint(
     return MessageFingerprint(
         index=index,
         subject=message.subject or "",
+        message_class=message.message_class,
+        internet_message_id=message.internet_message_id,
+        transport_headers_sha256=(
+            hashlib.sha256(
+                message.transport_headers.encode("utf-8")
+            ).hexdigest()
+            if message.transport_headers is not None
+            else None
+        ),
+        conversation_topic=message.conversation_topic,
+        conversation_index_sha256=(
+            hashlib.sha256(message.conversation_index).hexdigest()
+            if message.conversation_index is not None
+            else None
+        ),
+        importance=message.importance,
+        sensitivity=message.sensitivity,
         delivery_time=_normalize_datetime(message.delivery_time),
         creation_time=_normalize_datetime(message.creation_time),
         is_read=message.is_read,
@@ -370,6 +397,9 @@ def _attachment_fingerprint(
     return AttachmentFingerprint(
         index=index,
         filename=attachment.filename,
+        mime_type=attachment.mime_type,
+        content_id=attachment.content_id,
+        content_location=attachment.content_location,
         size=len(data),
         sha256=hashlib.sha256(data).hexdigest(),
     )
@@ -398,12 +428,25 @@ def _compare_messages(
         if expected.subject != actual.subject:
             add("message", path, "subject", expected.subject, actual.subject)
 
-        for field in ("delivery_time", "creation_time", "is_read"):
+        for field in (
+            "message_class",
+            "internet_message_id",
+            "transport_headers_sha256",
+            "conversation_topic",
+            "conversation_index_sha256",
+            "importance",
+            "sensitivity",
+            "delivery_time",
+            "creation_time",
+            "is_read",
+        ):
             expected_value = getattr(expected, field)
             actual_value = getattr(actual, field)
 
             # Missing source metadata means libpff could not provide a value,
             # so it is not meaningful to require a destination match.
+            if expected_value is None:
+                continue
             if expected_value is None:
                 continue
             if expected_value != actual_value:
@@ -482,7 +525,13 @@ def _compare_attachments(
                 actual.filename,
             )
 
-        for field in ("size", "sha256"):
+        for field in (
+            "mime_type",
+            "content_id",
+            "content_location",
+            "size",
+            "sha256",
+        ):
             expected_value = getattr(expected, field)
             actual_value = getattr(actual, field)
             if expected_value != actual_value:
