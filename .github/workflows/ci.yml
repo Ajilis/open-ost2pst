@@ -92,3 +92,47 @@ jobs:
             }
           }
         shell: pwsh
+
+  windows-exe:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Windows build dependencies
+        run: python -m pip install -e ".[dev,windows,build-windows]"
+
+      - name: Run conversion progress tests
+        run: python -m pytest -q tests/test_conversion_progress.py
+
+      - name: Build GUI executable
+        run: ./scripts/windows/build_gui.ps1
+        shell: pwsh
+
+      - name: Self-test frozen executable
+        run: |
+          $process = Start-Process -FilePath ".\dist\OpenOST2PST.exe" -ArgumentList "--self-test" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "Frozen executable self-test failed with exit code $($process.ExitCode)"
+          }
+        shell: pwsh
+
+      - name: Prepare Windows artifact
+        run: |
+          New-Item -ItemType Directory -Path package -Force | Out-Null
+          Copy-Item .\dist\OpenOST2PST.exe .\package\OpenOST2PST.exe
+          Copy-Item .\THIRD_PARTY_NOTICES.md .\package\THIRD_PARTY_NOTICES.md
+          $hash = (Get-FileHash .\package\OpenOST2PST.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  OpenOST2PST.exe" | Set-Content .\package\SHA256.txt -Encoding ASCII
+        shell: pwsh
+
+      - name: Upload Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenOST2PST-Windows-x64
+          path: package/
+          if-no-files-found: error
