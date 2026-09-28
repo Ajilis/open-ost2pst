@@ -6,6 +6,12 @@ from dataclasses import dataclass
 import struct
 from typing import Iterable, Sequence
 
+from open_ost2pst.binary_payload import (
+    BinaryData,
+    binary_size,
+    iter_binary_chunks,
+)
+
 from .blocks import DataBlockImage, DataBlockStore
 from .primitives import (
     BID_INTERNAL,
@@ -108,24 +114,16 @@ def parse_xblock(payload: bytes) -> tuple[int, int, tuple[int, ...]]:
 
 def store_data_stream(
     store: DataBlockStore,
-    data: bytes | bytearray | memoryview,
+    data: BinaryData | bytearray | memoryview,
     *,
     c_ref: int = 1,
 ) -> DataTreeImage:
-    """Store arbitrary logical bytes using data blocks plus XBLOCK or XXBLOCK."""
-
-    raw = bytes(data)
-    chunks = [
-        raw[offset : offset + BLOCK_MAX_PAYLOAD]
-        for offset in range(0, len(raw), BLOCK_MAX_PAYLOAD)
-    ]
-    if not chunks:
-        chunks = [b""]
+    """Store arbitrary logical bytes without materializing one giant buffer."""
 
     return store_block_sequence(
         store,
-        chunks,
-        logical_size=len(raw),
+        iter_binary_chunks(data, BLOCK_MAX_PAYLOAD),
+        logical_size=binary_size(data),
         c_ref=c_ref,
     )
 
@@ -137,34 +135,42 @@ def store_block_sequence(
     logical_size: int | None = None,
     c_ref: int = 1,
 ) -> DataTreeImage:
-    """Store a logical stream while preserving caller-supplied block boundaries."""
+    """Store a logical stream incrementally while preserving block boundaries."""
 
-    chunks = tuple(bytes(payload) for payload in payloads)
-    if not chunks:
-        chunks = (b"",)
+    data_blocks: list[DataBlockImage] = []
+    calculated_size = 0
 
-    for payload in chunks:
-        if len(payload) > BLOCK_MAX_PAYLOAD:
+    for payload in payloads:
+        raw = bytes(payload)
+        if len(raw) > BLOCK_MAX_PAYLOAD:
             raise ValueError(
                 f"data block payload exceeds {BLOCK_MAX_PAYLOAD} bytes"
             )
+        calculated_size += len(raw)
+        data_blocks.append(
+            store.add(raw, c_ref=c_ref, internal=False)
+        )
 
-    calculated_size = sum(len(payload) for payload in chunks)
+    if not data_blocks:
+        data_blocks.append(
+            store.add(b"", c_ref=c_ref, internal=False)
+        )
+
     if logical_size is None:
         logical_size = calculated_size
+    elif logical_size != calculated_size:
+        raise ValueError(
+            "logical stream size does not match streamed payload bytes"
+        )
+
     if not 0 <= logical_size <= UINT32_MAX:
         raise ValueError("logical stream size must fit in 32 bits")
-
-    data_blocks = tuple(
-        store.add(payload, c_ref=c_ref, internal=False)
-        for payload in chunks
-    )
 
     if len(data_blocks) == 1:
         return DataTreeImage(
             root_bid=data_blocks[0].bref.bid,
             logical_size=logical_size,
-            data_blocks=data_blocks,
+            data_blocks=tuple(data_blocks),
             index_blocks=(),
         )
 
@@ -183,7 +189,7 @@ def store_block_sequence(
         return DataTreeImage(
             root_bid=xblocks[0].bref.bid,
             logical_size=logical_size,
-            data_blocks=data_blocks,
+            data_blocks=tuple(data_blocks),
             index_blocks=tuple(xblocks),
         )
 
@@ -202,10 +208,9 @@ def store_block_sequence(
     return DataTreeImage(
         root_bid=xxblock.bref.bid,
         logical_size=logical_size,
-        data_blocks=data_blocks,
+        data_blocks=tuple(data_blocks),
         index_blocks=tuple(xblocks) + (xxblock,),
     )
-
 
 def _index_level_from_block(block: DataBlockImage) -> int:
     payload = block.data[: block.payload_size]
