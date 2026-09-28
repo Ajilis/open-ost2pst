@@ -8,6 +8,7 @@ from typing import Any
 
 from open_ost2pst.model import Folder, Mailbox, Message, Recipient
 
+from .ltp.pc import PropertyType
 from .messaging import (
     RECIPIENT_TYPE_BCC,
     RECIPIENT_TYPE_CC,
@@ -198,6 +199,54 @@ def _message_kwargs(
     }
 
 
+def _copy_named_properties(
+    source: Message,
+    target: MessagingMessage,
+    builder: MessagingBuilder,
+    report: WriteReport,
+) -> None:
+    for named in source.named_properties:
+        try:
+            property_type = PropertyType(named.property_type)
+        except ValueError:
+            report.warn(
+                "unsupported named property type "
+                f"{named.property_type:#06x} skipped for {source.subject!r}"
+            )
+            continue
+
+        value = named.value
+        if property_type == PropertyType.SYSTIME:
+            if not isinstance(value, datetime):
+                report.warn(
+                    "named SYSTIME property skipped because its value "
+                    f"is not datetime for {source.subject!r}"
+                )
+                continue
+            try:
+                value = datetime_to_filetime(value)
+            except ValueError as exc:
+                report.warn(
+                    f"named SYSTIME property skipped for "
+                    f"{source.subject!r}: {exc}"
+                )
+                continue
+
+        try:
+            builder.set_named_property(
+                target,
+                named.name,
+                value,
+                property_type=property_type,
+                guid=named.guid,
+            )
+        except (TypeError, ValueError, OverflowError) as exc:
+            report.warn(
+                f"named property {named.name!r} skipped for "
+                f"{source.subject!r}: {exc}"
+            )
+
+
 def _copy_message_children(
     source: Message,
     target: MessagingMessage,
@@ -206,6 +255,8 @@ def _copy_message_children(
     *,
     count_for_report: bool,
 ) -> None:
+    _copy_named_properties(source, target, builder, report)
+
     for recipient in source.recipients:
         recipient_type = _recipient_type(recipient, report)
         builder.add_recipient(
