@@ -143,13 +143,53 @@ def _int_attr(obj: Any, name: str) -> int:
         return 0
 
 
+def _legacy_attr(
+    obj: Any,
+    attribute_name: str,
+    getter_name: str,
+    default: Any = None,
+) -> Any:
+    """Read a pypff value exposed as either a property or get_* method."""
+
+    value = _safe_attr(obj, attribute_name, None)
+    if value is None:
+        value = _safe_attr(obj, getter_name, None)
+    return default if value is None else value
+
+
+def _legacy_integer(
+    obj: Any,
+    attribute_name: str,
+    getter_name: str,
+) -> int:
+    value = _legacy_attr(
+        obj,
+        attribute_name,
+        getter_name,
+        0,
+    )
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _record_set(obj: Any) -> Any | None:
     """Return a record set for a pypff item or an existing record set."""
 
     if obj is None:
         return None
 
-    if hasattr(obj, "get_entry_by_type"):
+    if (
+        hasattr(obj, "get_entry_by_type")
+        or (
+            hasattr(obj, "get_entry")
+            and (
+                hasattr(obj, "get_number_of_entries")
+                or hasattr(obj, "number_of_entries")
+            )
+        )
+    ):
         return obj
 
     try:
@@ -159,23 +199,38 @@ def _record_set(obj: Any) -> Any | None:
 
 
 def _entry(obj: Any, property_id: int) -> Any | None:
+    """Find one MAPI record entry across old and new pypff APIs."""
+
     record_set = _record_set(obj)
     if record_set is None:
         return None
 
     if hasattr(record_set, "get_entry_by_type"):
         try:
-            return record_set.get_entry_by_type(property_id)
+            entry = record_set.get_entry_by_type(property_id)
+            if entry is not None:
+                return entry
         except Exception:
-            return None
+            # Fall back to enumeration for older/incomplete bindings.
+            pass
 
-    count = _int_attr(record_set, "number_of_entries")
+    count = _legacy_integer(
+        record_set,
+        "number_of_entries",
+        "get_number_of_entries",
+    )
     for index in range(count):
         try:
             entry = record_set.get_entry(index)
         except Exception:
             continue
-        if _int_attr(entry, "entry_type") == property_id:
+
+        entry_type = _legacy_integer(
+            entry,
+            "entry_type",
+            "get_entry_type",
+        )
+        if entry_type == property_id:
             return entry
 
     return None
@@ -240,7 +295,11 @@ def _iter_record_entries(obj: Any) -> list[Any]:
         return []
 
     entries: list[Any] = []
-    count = _int_attr(record_set, "number_of_entries")
+    count = _legacy_integer(
+        record_set,
+        "number_of_entries",
+        "get_number_of_entries",
+    )
     for index in range(count):
         try:
             entries.append(record_set.get_entry(index))
@@ -352,25 +411,59 @@ def _entry_named_property_value(
     value_type: int,
 ) -> Any:
     if value_type in (PT_INTEGER16, PT_INTEGER32, PT_INTEGER64):
-        value = _safe_attr(entry, "data_as_integer")
+        value = _legacy_attr(
+            entry,
+            "data_as_integer",
+            "get_data_as_integer",
+        )
         return None if value is None else int(value)
+
     if value_type == PT_BOOLEAN:
-        value = _safe_attr(entry, "data_as_boolean")
+        value = _legacy_attr(
+            entry,
+            "data_as_boolean",
+            "get_data_as_boolean",
+        )
         if value is None:
-            value = _safe_attr(entry, "data_as_integer")
+            value = _legacy_attr(
+                entry,
+                "data_as_integer",
+                "get_data_as_integer",
+            )
         return None if value is None else bool(value)
+
     if value_type in (PT_FLOAT32, PT_FLOAT64):
-        value = _safe_attr(entry, "data_as_floating_point")
+        value = _legacy_attr(
+            entry,
+            "data_as_floating_point",
+            "get_data_as_floating_point",
+        )
         return None if value is None else float(value)
+
     if value_type in (PT_STRING8, PT_UNICODE):
-        value = _safe_attr(entry, "data_as_string")
+        value = _legacy_attr(
+            entry,
+            "data_as_string",
+            "get_data_as_string",
+        )
         return None if value is None else str(value)
+
     if value_type == PT_SYSTIME:
-        value = _safe_attr(entry, "data_as_datetime")
+        value = _legacy_attr(
+            entry,
+            "data_as_datetime",
+            "get_data_as_datetime",
+        )
         return value if isinstance(value, datetime) else None
+
     if value_type in (PT_GUID, PT_BINARY):
-        value = _safe_attr(entry, "data")
+        value = _legacy_attr(
+            entry,
+            "data",
+            "get_data",
+        )
         return None if value is None else bytes(value)
+
     return None
 
 
@@ -384,12 +477,20 @@ def _extract_named_properties(
 
     result: list[NamedPropertyValue] = []
     for entry in _iter_record_entries(message):
-        property_id = _int_attr(entry, "entry_type")
+        property_id = _legacy_integer(
+            entry,
+            "entry_type",
+            "get_entry_type",
+        )
         definition = definitions.get(property_id)
         if definition is None:
             continue
 
-        value_type = _int_attr(entry, "value_type")
+        value_type = _legacy_integer(
+            entry,
+            "value_type",
+            "get_value_type",
+        )
         value = _entry_named_property_value(entry, value_type)
         if value is None:
             report.warn(
