@@ -33,7 +33,7 @@ jobs:
       - name: Install system libpff bindings
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-pypff python3-venv
+          sudo apt-get install -y libpff-dev python3-pypff python3-venv
 
       - name: Create test environment
         run: |
@@ -42,6 +42,12 @@ jobs:
 
       - name: Validate generated PST with libpff
         run: .venv-libpff/bin/python -m pytest -q tests/test_libpff_ndb.py tests/test_libpff_pc.py tests/test_libpff_tc.py tests/test_libpff_minimum_hierarchy.py tests/test_libpff_nameid.py tests/test_libpff_named_property_roundtrip.py tests/test_libpff_advanced_metadata.py tests/test_libpff_embedded_message.py tests/test_libpff_messaging.py tests/test_libpff_recipients_attachments.py tests/test_libpff_convert.py tests/test_libpff_large_data.py tests/test_libpff_verify.py tests/test_libpff_siblock.py tests/test_libpff_rtf.py
+
+      - name: Validate embedded message through libpff C API
+        run: |
+          .venv-libpff/bin/python tests/helpers/generate_embedded_message_pst.py embedded-message.pst
+          cc -Wall -Wextra -Werror tests/c/validate_embedded_message.c -lpff -o validate-embedded-message
+          ./validate-embedded-message embedded-message.pst
 
   windows-harness:
     runs-on: windows-latest
