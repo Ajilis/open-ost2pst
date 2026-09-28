@@ -53,4 +53,8 @@ def test_libpff_reads_large_rtf_body_exactly() -> None:
 
         mailbox, report = load_mailbox(handle.name)
         assert report.messages_failed == 0
-        assert mailbox.root.folders[0].messages[0].body_rtf == rtf
+        mailbox_inbox = next(
+            folder for folder in mailbox.root.folders
+            if folder.name == "Inbox"
+        )
+        assert mailbox_inbox.messages[0].body_rtf == rtf
