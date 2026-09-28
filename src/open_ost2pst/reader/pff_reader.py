@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import struct
 from uuid import UUID
 from email.utils import parseaddr
@@ -461,7 +461,11 @@ def _entry_named_property_value(
             "data_as_datetime",
             "get_data_as_datetime",
         )
-        return value if isinstance(value, datetime) else None
+        if not isinstance(value, datetime):
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     if value_type in (PT_GUID, PT_BINARY):
         value = _legacy_attr(
