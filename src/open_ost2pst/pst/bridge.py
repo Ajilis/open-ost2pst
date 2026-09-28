@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from open_ost2pst.model import Folder, Mailbox, Message, Recipient
 
@@ -47,6 +47,7 @@ def mailbox_to_messaging(
     mailbox: Mailbox,
     *,
     store_name: str = "Open OST2PST Store",
+    progress_callback: Callable[[WriteReport], None] | None = None,
 ) -> tuple[MessagingBuilder, WriteReport]:
     """Translate a format-neutral mailbox into Messaging objects."""
 
@@ -72,6 +73,7 @@ def mailbox_to_messaging(
         builder.root,
         builder,
         report,
+        progress_callback,
     )
 
     return builder, report
@@ -102,11 +104,20 @@ def _copy_folder_contents(
     destination: MessagingFolder,
     builder: MessagingBuilder,
     report: WriteReport,
+    progress_callback: Callable[[WriteReport], None] | None = None,
 ) -> None:
     report.folders_written += 1
+    if progress_callback is not None:
+        progress_callback(report)
 
     for message in source.messages:
-        _copy_message(message, destination, builder, report)
+        _copy_message(
+            message,
+            destination,
+            builder,
+            report,
+            progress_callback,
+        )
 
     for child in source.folders:
         if (
@@ -125,6 +136,7 @@ def _copy_folder_contents(
             child_destination,
             builder,
             report,
+            progress_callback,
         )
 
 
@@ -133,6 +145,7 @@ def _copy_message(
     folder: MessagingFolder,
     builder: MessagingBuilder,
     report: WriteReport,
+    progress_callback: Callable[[WriteReport], None] | None = None,
 ) -> None:
     target = builder.add_message(
         folder,
@@ -144,8 +157,11 @@ def _copy_message(
         builder,
         report,
         count_for_report=True,
+        progress_callback=progress_callback,
     )
     report.messages_written += 1
+    if progress_callback is not None:
+        progress_callback(report)
 
 
 def _message_kwargs(
@@ -303,6 +319,7 @@ def _copy_message_children(
     report: WriteReport,
     *,
     count_for_report: bool,
+    progress_callback: Callable[[WriteReport], None] | None = None,
 ) -> None:
     _copy_standard_properties(source, target, builder, report)
     _copy_named_properties(source, target, builder, report)
@@ -331,6 +348,7 @@ def _copy_message_children(
                 builder,
                 report,
                 count_for_report=False,
+                progress_callback=progress_callback,
             )
 
         builder.add_attachment(
@@ -344,6 +362,8 @@ def _copy_message_children(
         )
         if count_for_report:
             report.attachments_written += 1
+            if progress_callback is not None:
+                progress_callback(report)
 
 
 def _recipient_label(recipient: Recipient) -> str:
