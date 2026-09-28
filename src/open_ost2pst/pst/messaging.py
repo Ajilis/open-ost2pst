@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .image import NdbBuildResult, NdbImageBuilder
+from .image import NdbBuildResult, NdbImageBuilder, StoredNode
 from .nameid import NameIdMap
 from .ltp.pc import PropertyContext, PropertyType
 from .ltp.tc import TableContext
@@ -21,9 +21,14 @@ NID_SPAM_SEARCH_FOLDER = 0x2223
 NID_ATTACHMENT_TABLE = 0x0671
 NID_RECIPIENT_TABLE = 0x0692
 
+PR_IMPORTANCE = 0x0017
 PR_MESSAGE_CLASS = 0x001A
+PR_SENSITIVITY = 0x0036
 PR_SUBJECT = 0x0037
 PR_CLIENT_SUBMIT_TIME = 0x0039
+PR_CONVERSATION_TOPIC = 0x0070
+PR_CONVERSATION_INDEX = 0x0071
+PR_TRANSPORT_MESSAGE_HEADERS = 0x007D
 PR_SENDER_NAME = 0x0C1A
 PR_RECIPIENT_TYPE = 0x0C15
 PR_SENDER_EMAIL_ADDRESS = 0x0C1F
@@ -36,6 +41,7 @@ PR_ATTACH_SIZE = 0x0E20
 PR_BODY = 0x1000
 PR_RTF_COMPRESSED = 0x1009
 PR_HTML = 0x1013
+PR_INTERNET_MESSAGE_ID = 0x1035
 
 PR_DISPLAY_NAME = 0x3001
 PR_ADDRTYPE = 0x3002
@@ -49,11 +55,15 @@ PR_ATTACH_DATA = 0x3701
 PR_ATTACH_FILENAME = 0x3704
 PR_ATTACH_METHOD = 0x3705
 PR_ATTACH_LONG_FILENAME = 0x3707
+PR_ATTACH_RENDERING_POSITION = 0x370B
 PR_ATTACH_MIME_TAG = 0x370E
+PR_ATTACH_CONTENT_ID = 0x3712
+PR_ATTACH_CONTENT_LOCATION = 0x3713
 PR_SMTP_ADDRESS = 0x39FE
 
 MSGFLAG_READ = 0x00000001
 ATTACH_BY_VALUE = 1
+ATTACH_EMBEDDED_MESSAGE = 5
 
 RECIPIENT_TYPE_TO = 1
 RECIPIENT_TYPE_CC = 2
@@ -70,8 +80,11 @@ class MessagingRecipient:
 @dataclass(slots=True)
 class MessagingAttachment:
     filename: str
-    data: bytes
+    data: bytes = b""
     mime_type: str | None = None
+    content_id: str | None = None
+    content_location: str | None = None
+    embedded_message: "MessagingMessage | None" = None
 
 
 @dataclass(slots=True)
@@ -85,6 +98,13 @@ class MessagingMessage:
     display_cc: str = ""
     html_body: bytes | None = None
     rtf_body: bytes | None = None
+    message_class: str = "IPM.Note"
+    internet_message_id: str | None = None
+    transport_headers: str | None = None
+    conversation_topic: str | None = None
+    conversation_index: bytes | None = None
+    importance: int = 1
+    sensitivity: int = 0
     delivery_filetime: int | None = None
     client_submit_filetime: int | None = None
     creation_filetime: int | None = None
@@ -187,6 +207,13 @@ class MessagingBuilder:
         display_cc: str = "",
         html_body: bytes | None = None,
         rtf_body: bytes | None = None,
+        message_class: str = "IPM.Note",
+        internet_message_id: str | None = None,
+        transport_headers: str | None = None,
+        conversation_topic: str | None = None,
+        conversation_index: bytes | None = None,
+        importance: int = 1,
+        sensitivity: int = 0,
         delivery_filetime: int | None = None,
         client_submit_filetime: int | None = None,
         creation_filetime: int | None = None,
@@ -205,6 +232,13 @@ class MessagingBuilder:
             display_cc=display_cc,
             html_body=html_body,
             rtf_body=rtf_body,
+            message_class=message_class,
+            internet_message_id=internet_message_id,
+            transport_headers=transport_headers,
+            conversation_topic=conversation_topic,
+            conversation_index=conversation_index,
+            importance=importance,
+            sensitivity=sensitivity,
             delivery_filetime=delivery_filetime,
             client_submit_filetime=client_submit_filetime,
             creation_filetime=creation_filetime,
@@ -269,11 +303,17 @@ class MessagingBuilder:
         filename: str,
         data: bytes | bytearray | memoryview,
         mime_type: str | None = None,
+        content_id: str | None = None,
+        content_location: str | None = None,
+        embedded_message: MessagingMessage | None = None,
     ) -> MessagingAttachment:
         attachment = MessagingAttachment(
             filename=filename,
             data=bytes(data),
             mime_type=mime_type,
+            content_id=content_id,
+            content_location=content_location,
+            embedded_message=embedded_message,
         )
         message.attachments.append(attachment)
         return attachment
@@ -436,6 +476,24 @@ class MessagingBuilder:
         *,
         parent_nid: int,
     ) -> None:
+        stored_message = self._store_message_node(ndb, message)
+        sub_bid = (
+            ndb.add_subnode_tree(stored_message.subnodes)
+            if stored_message.subnodes
+            else 0
+        )
+        ndb.add_node(
+            message.nid,
+            stored_message.data_bid,
+            sub_bid=sub_bid,
+            parent_nid=parent_nid,
+        )
+
+    def _store_message_node(
+        self,
+        ndb: NdbImageBuilder,
+        message: MessagingMessage,
+    ) -> StoredNode:
         stored_message = ndb.store_property_context_node(
             _build_message_pc(message)
         )
@@ -454,15 +512,45 @@ class MessagingBuilder:
 
             for index, attachment in enumerate(message.attachments):
                 local_nid = make_nid(NidType.ATTACHMENT, 0x20 + index)
-                subnodes[local_nid] = ndb.store_property_context_node(
-                    _build_attachment_pc(attachment)
+                method = (
+                    ATTACH_EMBEDDED_MESSAGE
+                    if attachment.embedded_message is not None
+                    else ATTACH_BY_VALUE
+                )
+                embedded_nid = (
+                    make_nid(NidType.NORMAL_MESSAGE, 0x20)
+                    if attachment.embedded_message is not None
+                    else None
+                )
+                attachment_pc = _build_attachment_pc(
+                    attachment,
+                    embedded_message_nid=embedded_nid,
+                )
+                stored_attachment = ndb.store_property_context_node(
+                    attachment_pc
+                )
+                attachment_subnodes: dict[int, object] = dict(
+                    stored_attachment.subnodes
+                )
+                if embedded_nid is not None:
+                    attachment_subnodes[embedded_nid] = self._store_message_node(
+                        ndb,
+                        attachment.embedded_message,
+                    )
+                subnodes[local_nid] = StoredNode(
+                    data_bid=stored_attachment.data_bid,
+                    subnodes=attachment_subnodes,
                 )
                 attachment_table.add_row(
                     local_nid,
                     {
                         PR_DISPLAY_NAME: attachment.filename,
-                        PR_ATTACH_SIZE: len(attachment.data),
-                        PR_ATTACH_METHOD: ATTACH_BY_VALUE,
+                        PR_ATTACH_SIZE: (
+                            0
+                            if attachment.embedded_message is not None
+                            else len(attachment.data)
+                        ),
+                        PR_ATTACH_METHOD: method,
                     },
                 )
 
@@ -470,12 +558,9 @@ class MessagingBuilder:
                 attachment_table
             )
 
-        sub_bid = ndb.add_subnode_tree(subnodes) if subnodes else 0
-        ndb.add_node(
-            message.nid,
-            stored_message.data_bid,
-            sub_bid=sub_bid,
-            parent_nid=parent_nid,
+        return StoredNode(
+            data_bid=stored_message.data_bid,
+            subnodes=subnodes,
         )
 
 
@@ -502,6 +587,8 @@ def _build_hierarchy_table(folder: MessagingFolder) -> TableContext:
 def _build_contents_table(folder: MessagingFolder) -> TableContext:
     table = TableContext()
     table.add_column(PR_MESSAGE_FLAGS, 0x0003)
+    table.add_column(PR_IMPORTANCE, 0x0003)
+    table.add_column(PR_SENSITIVITY, 0x0003)
 
     if any(message.delivery_filetime is not None for message in folder.messages):
         table.add_column(PR_MESSAGE_DELIVERY_TIME, 0x0040)
@@ -509,6 +596,8 @@ def _build_contents_table(folder: MessagingFolder) -> TableContext:
     for message in folder.messages:
         values: dict[int, int] = {
             PR_MESSAGE_FLAGS: MSGFLAG_READ if message.is_read else 0,
+            PR_IMPORTANCE: message.importance,
+            PR_SENSITIVITY: message.sensitivity,
         }
         if message.delivery_filetime is not None:
             values[PR_MESSAGE_DELIVERY_TIME] = message.delivery_filetime
@@ -540,7 +629,7 @@ def _build_recipient_table(message: MessagingMessage) -> TableContext:
 
 def _build_message_pc(message: MessagingMessage) -> PropertyContext:
     pc = PropertyContext()
-    pc.set_unicode(PR_MESSAGE_CLASS, "IPM.Note")
+    pc.set_unicode(PR_MESSAGE_CLASS, message.message_class or "IPM.Note")
     pc.set_unicode(PR_SUBJECT, message.subject)
     pc.set_unicode(PR_BODY, message.body)
     pc.set_integer32(
@@ -548,6 +637,17 @@ def _build_message_pc(message: MessagingMessage) -> PropertyContext:
         MSGFLAG_READ if message.is_read else 0,
     )
     pc.set_boolean(PR_HAS_ATTACH, bool(message.attachments))
+    pc.set_integer32(PR_IMPORTANCE, message.importance)
+    pc.set_integer32(PR_SENSITIVITY, message.sensitivity)
+
+    if message.internet_message_id:
+        pc.set_unicode(PR_INTERNET_MESSAGE_ID, message.internet_message_id)
+    if message.transport_headers:
+        pc.set_unicode(PR_TRANSPORT_MESSAGE_HEADERS, message.transport_headers)
+    if message.conversation_topic:
+        pc.set_unicode(PR_CONVERSATION_TOPIC, message.conversation_topic)
+    if message.conversation_index is not None:
+        pc.set_binary(PR_CONVERSATION_INDEX, message.conversation_index)
 
     if message.sender_name:
         pc.set_unicode(PR_SENDER_NAME, message.sender_name)
@@ -577,16 +677,35 @@ def _build_message_pc(message: MessagingMessage) -> PropertyContext:
     return pc
 
 
-def _build_attachment_pc(attachment: MessagingAttachment) -> PropertyContext:
+def _build_attachment_pc(
+    attachment: MessagingAttachment,
+    *,
+    embedded_message_nid: int | None = None,
+) -> PropertyContext:
     pc = PropertyContext()
-    pc.set_integer32(PR_ATTACH_METHOD, ATTACH_BY_VALUE)
-    pc.set_binary(PR_ATTACH_DATA, attachment.data)
+    pc.set_integer32(PR_ATTACH_RENDERING_POSITION, -1)
     pc.set_unicode(PR_ATTACH_LONG_FILENAME, attachment.filename)
     pc.set_unicode(PR_ATTACH_FILENAME, attachment.filename)
     pc.set_unicode(PR_DISPLAY_NAME, attachment.filename)
-    pc.set_integer32(PR_ATTACH_SIZE, len(attachment.data))
+
+    if embedded_message_nid is not None:
+        pc.set_integer32(PR_ATTACH_METHOD, ATTACH_EMBEDDED_MESSAGE)
+        pc.set_object(PR_ATTACH_DATA, embedded_message_nid, 0)
+        pc.set_integer32(PR_ATTACH_SIZE, 0)
+    else:
+        pc.set_integer32(PR_ATTACH_METHOD, ATTACH_BY_VALUE)
+        pc.set_binary(PR_ATTACH_DATA, attachment.data)
+        pc.set_integer32(PR_ATTACH_SIZE, len(attachment.data))
+
     if attachment.mime_type:
         pc.set_unicode(PR_ATTACH_MIME_TAG, attachment.mime_type)
+    if attachment.content_id:
+        pc.set_unicode(PR_ATTACH_CONTENT_ID, attachment.content_id)
+    if attachment.content_location:
+        pc.set_unicode(
+            PR_ATTACH_CONTENT_LOCATION,
+            attachment.content_location,
+        )
     return pc
 
 
