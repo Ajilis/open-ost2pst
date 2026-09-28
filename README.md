@@ -71,7 +71,9 @@ open-ost2pst verify mailbox.pst --source mailbox.ost --report verify.json
 
 `verify` can validate a PST on its own or compare it against a source OST/PST. Source/destination comparison checks folder hierarchy and counts, message order/subjects/dates/read state, attachment counts/sizes, and SHA-256 hashes of attachment bytes. Verification exits non-zero when libpff extraction fails or mismatches are detected.
 
-Large variable properties, multi-block HN streams, large Row Matrices, zero-length binary values, and large attachments are supported through LTP subnodes plus XBLOCK/XXBLOCK data trees. Subnode BTrees automatically use SIBLOCK roots when more than 340 local subnodes are present, supporting up to 173,400 subnodes per local tree. RTF bodies are preserved through PidTagRtfCompressed using a standards-compliant literal-only LZFu stream and are hash-verified after libpff reopen. Data trees deeper than XXBLOCK remain future work.
+Large variable properties, multi-block HN streams, large Row Matrices, zero-length binary values, and large attachments are supported through LTP subnodes plus XBLOCK/XXBLOCK data trees. XBLOCK/XXBLOCK covers the maximum two-level data-tree indirection defined by MS-PST. Subnode BTrees automatically use SIBLOCK roots when more than 340 local subnodes are present, supporting up to 173,400 subnodes per local tree. RTF bodies are preserved through PidTagRtfCompressed using a standards-compliant literal-only LZFu stream and are hash-verified after libpff reopen.
+
+Generated PSTs now include the standard physical minimum hierarchy (Root Folder, IPM subtree, Deleted Items, Search Root, and Spam Search Folder) while the format-neutral mailbox model continues to expose the IPM subtree as its logical root. The writer also emits the Name-to-ID Map and supports real named properties in the 0x8000–0x8FFF range. Property ID 0x8000 is reserved internally as a compatibility sentinel so old libpff releases can parse non-empty NameID streams; user named properties are allocated from 0x8001.
 
 Windows interoperability tooling is included under scripts/windows/ plus a manual Windows Outlook Interop workflow. The normal CI validates the Windows fixture generator and PowerShell syntax on windows-latest. Real SCANPST/classic-Outlook validation requires a dedicated self-hosted Windows runner with classic Outlook installed and a configured Outlook profile. See docs/windows-interop.md.
 
@@ -87,6 +89,7 @@ src/open_ost2pst/
   pst/
     bridge.py
     messaging.py
+    nameid.py
     writer.py
     large_data.py
     rtf.py
