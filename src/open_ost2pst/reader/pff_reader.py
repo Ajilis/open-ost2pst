@@ -123,7 +123,23 @@ def _record_set(obj: Any) -> Any | None:
         return None
 
 
+def _legacy_integer(
+    obj: Any,
+    attribute_name: str,
+    getter_name: str,
+) -> int:
+    value = _safe_attr(obj, attribute_name, None)
+    if value is None:
+        value = _safe_attr(obj, getter_name, None)
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _entry(obj: Any, property_id: int) -> Any | None:
+    """Find one MAPI record entry across old and new pypff APIs."""
+
     record_set = _record_set(obj)
     if record_set is None:
         return None
@@ -132,15 +148,27 @@ def _entry(obj: Any, property_id: int) -> Any | None:
         try:
             return record_set.get_entry_by_type(property_id)
         except Exception:
-            return None
+            # Some pypff versions expose the method but fail for unsupported
+            # entry types. Fall back to enumeration before giving up.
+            pass
 
-    count = _int_attr(record_set, "number_of_entries")
+    count = _legacy_integer(
+        record_set,
+        "number_of_entries",
+        "get_number_of_entries",
+    )
     for index in range(count):
         try:
             entry = record_set.get_entry(index)
         except Exception:
             continue
-        if _int_attr(entry, "entry_type") == property_id:
+
+        entry_type = _legacy_integer(
+            entry,
+            "entry_type",
+            "get_entry_type",
+        )
+        if entry_type == property_id:
             return entry
 
     return None
