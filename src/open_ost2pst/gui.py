@@ -306,8 +306,9 @@ class OpenOst2PstApp:
         if self._running:
             return
 
-        source = Path(self.source_var.get().strip())
-        destination_dir = Path(self.destination_dir_var.get().strip())
+        source_text = self.source_var.get().strip()
+        destination_text = self.destination_dir_var.get().strip()
+        source = Path(source_text)
         output_name = _normalized_output_name(self.output_name_var.get())
 
         if not source.is_file():
@@ -324,12 +325,14 @@ class OpenOst2PstApp:
             )
             return
 
-        if not str(destination_dir):
+        if not destination_text:
             messagebox.showerror(
                 APP_NAME,
                 "Sélectionnez un répertoire de destination.",
             )
             return
+
+        destination_dir = Path(destination_text)
 
         try:
             destination_dir.mkdir(parents=True, exist_ok=True)
@@ -341,6 +344,13 @@ class OpenOst2PstApp:
             return
 
         destination = destination_dir / output_name
+        if source.resolve() == destination.resolve():
+            messagebox.showerror(
+                APP_NAME,
+                "Le fichier PST de destination doit être différent du fichier source.",
+            )
+            return
+
         report_path = (
             destination.with_suffix(".report.json")
             if self.report_var.get()
