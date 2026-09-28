@@ -33,7 +33,7 @@ jobs:
       - name: Install system libpff bindings
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpff-dev python3-pypff python3-venv
+          sudo apt-get install -y libbfio-dev libpff-dev python3-pypff python3-venv
 
       - name: Create test environment
         run: |
