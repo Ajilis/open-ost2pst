@@ -18,7 +18,15 @@ PT_OBJECT = 0x000D
 
 
 def _entry(item, property_id):
-    return item.get_record_set(0).get_entry_by_type(property_id)
+    record_set = item.get_record_set(0)
+    if hasattr(record_set, "get_entry_by_type"):
+        return record_set.get_entry_by_type(property_id)
+
+    for index in range(record_set.get_number_of_entries()):
+        entry = record_set.get_entry(index)
+        if entry.get_entry_type() == property_id:
+            return entry
+    return None
 
 
 def test_libpff_reads_embedded_message_attachment() -> None:
