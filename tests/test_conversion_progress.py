@@ -24,8 +24,10 @@ class _FakeBuildResult:
 
 
 class _FakeBuilder:
-    def build(self):
-        return _FakeBuildResult()
+    def write(self, path: str | Path) -> Path:
+        target = Path(path)
+        target.write_bytes(b"!BDNfake")
+        return target
 
 
 def _mailbox() -> Mailbox:

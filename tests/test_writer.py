@@ -20,5 +20,6 @@ def test_writer_creates_unicode_pst_image(tmp_path) -> None:
 
     assert destination.is_file()
     assert destination.read_bytes()[:4] == b"!BDN"
+    assert not list(tmp_path.glob(".output.pst.*.partial"))
     assert report.folders_written == 1
     assert report.messages_written == 1

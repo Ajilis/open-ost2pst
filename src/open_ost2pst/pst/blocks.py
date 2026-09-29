@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import struct
-from typing import Iterable
+from typing import BinaryIO, Iterable, Sequence
 
 from .btree import BbtEntry
 from .crc import compute_crc
@@ -113,7 +113,10 @@ class DataBlockStore:
 
     offset_allocator: BlockOffsetAllocator
     bid_allocator: BlockBidAllocator
+    sink: BinaryIO | None = None
+    retain_blocks: bool = True
     _blocks: list[DataBlockImage] = field(default_factory=list)
+    _bbt_entries: list[BbtEntry] = field(default_factory=list)
 
     @property
     def blocks(self) -> tuple[DataBlockImage, ...]:
@@ -121,7 +124,13 @@ class DataBlockStore:
 
     @property
     def bbt_entries(self) -> tuple[BbtEntry, ...]:
-        return tuple(block.bbt_entry for block in self._blocks)
+        return tuple(self._bbt_entries)
+
+    @property
+    def bbt_entry_sequence(self) -> Sequence[BbtEntry]:
+        """Return BBT metadata without duplicating the backing list."""
+
+        return self._bbt_entries
 
     @property
     def chunks(self) -> tuple[tuple[int, bytes], ...]:
@@ -159,7 +168,14 @@ class DataBlockStore:
             ),
             internal=internal,
         )
-        self._blocks.append(image)
+        if self.sink is not None:
+            if self.sink.tell() != ib:
+                self.sink.seek(ib)
+            self.sink.write(block_data)
+
+        self._bbt_entries.append(image.bbt_entry)
+        if self.retain_blocks:
+            self._blocks.append(image)
         return image
 
     def add_internal(

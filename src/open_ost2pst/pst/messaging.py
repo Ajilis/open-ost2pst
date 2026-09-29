@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
+from pathlib import Path
+import tempfile
 
 from open_ost2pst.binary_payload import (
     BinaryData,
@@ -416,8 +419,66 @@ class MessagingBuilder:
         return attachment
 
     def build(self) -> MessagingBuildResult:
-        ndb = NdbImageBuilder()
+        """Build a complete PST image in memory.
 
+        This compatibility path is intended for tests and small stores.
+        Production conversion should use write() so PST bytes are streamed
+        directly to disk.
+        """
+
+        ndb = NdbImageBuilder()
+        counts = self._populate_ndb(ndb)
+        return self._build_result(ndb.build(), counts)
+
+    def write(self, path: str | Path) -> Path:
+        """Build the PST directly into a temporary file and atomically publish it."""
+
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary: Path | None = None
+
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w+b",
+                dir=destination.parent,
+                prefix=f".{destination.name}.",
+                suffix=".partial",
+                delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+                ndb = NdbImageBuilder(sink=handle)
+                self._populate_ndb(ndb)
+                ndb.finalize_stream()
+
+            os.replace(temporary, destination)
+            return destination
+        except Exception:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise
+
+    def _build_result(
+        self,
+        pst: NdbBuildResult,
+        counts: tuple[int, int, int],
+    ) -> MessagingBuildResult:
+        folder_count, message_count, attachment_count = counts
+        return MessagingBuildResult(
+            pst=pst,
+            root_folder_nid=NID_ROOT_FOLDER,
+            folder_count=folder_count,
+            message_count=message_count,
+            attachment_count=attachment_count,
+            ipm_subtree_nid=self.root.nid,
+        )
+
+    def _populate_ndb(
+        self,
+        ndb: NdbImageBuilder,
+    ) -> tuple[int, int, int]:
         store_pc = PropertyContext()
         store_pc.set_unicode(PR_DISPLAY_NAME, self.store_name)
         store_pc.set_integer32(PR_STORE_SUPPORT_MASK, 0)
@@ -460,13 +521,10 @@ class MessagingBuilder:
             parent_nid=NID_ROOT_FOLDER,
         )
 
-        return MessagingBuildResult(
-            pst=ndb.build(),
-            root_folder_nid=NID_ROOT_FOLDER,
-            folder_count=folder_count + search_folders + 2,
-            message_count=message_count + search_messages,
-            attachment_count=attachment_count + search_attachments,
-            ipm_subtree_nid=self.root.nid,
+        return (
+            folder_count + search_folders + 2,
+            message_count + search_messages,
+            attachment_count + search_attachments,
         )
 
     def _emit_minimum_root(self, ndb: NdbImageBuilder) -> None:

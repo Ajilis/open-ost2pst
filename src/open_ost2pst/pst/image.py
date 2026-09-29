@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import BinaryIO
 
 from .amap import AmapAllocator
 from .blocks import DataBlockImage, DataBlockStore
@@ -59,6 +60,7 @@ class NdbBuildResult:
 class NdbImageBuilder:
     """Build a self-contained Unicode PST NDB layer."""
 
+    sink: BinaryIO | None = None
     amap: AmapAllocator = field(default_factory=AmapAllocator)
     block_bids: BlockBidAllocator = field(
         default_factory=lambda: BlockBidAllocator(4)
@@ -74,6 +76,8 @@ class NdbImageBuilder:
         self._blocks = DataBlockStore(
             offset_allocator=self.amap.block_allocator(),
             bid_allocator=self.block_bids,
+            sink=self.sink,
+            retain_blocks=self.sink is None,
         )
 
     @property
@@ -348,9 +352,9 @@ class NdbImageBuilder:
             parent_nid=parent_nid,
         )
 
-    def build(self) -> NdbBuildResult:
-        """Build HEADER + AMaps + blocks + NBT/BBT pages into one PST image."""
-
+    def _finalize_metadata(
+        self,
+    ) -> tuple[UnicodeHeader, BTreeResult, BTreeResult]:
         page_allocator = self.amap.page_allocator()
 
         nbt = build_nbt(
@@ -360,7 +364,7 @@ class NdbImageBuilder:
         )
 
         bbt = build_bbt(
-            self._blocks.bbt_entries,
+            self._blocks.bbt_entry_sequence,
             offset_allocator=page_allocator,
             bid_allocator=self.page_bids,
         )
@@ -380,6 +384,23 @@ class NdbImageBuilder:
             bid_next_b=self.block_bids.next_bid,
             unique=self.unique,
         )
+        return header, nbt, bbt
+
+    def build(self) -> NdbBuildResult:
+        """Build an in-memory PST image.
+
+        Use finalize_stream() when the builder was created with a file sink.
+        The streamed path avoids retaining physical PST blocks and the final
+        full-size image in RAM.
+        """
+
+        if self.sink is not None:
+            raise RuntimeError(
+                "stream-backed NdbImageBuilder must use finalize_stream()"
+            )
+
+        header, nbt, bbt = self._finalize_metadata()
+        root = header.root
 
         image = bytearray(root.file_eof)
         _write_chunk(image, 0, header.pack(), "HEADER")
@@ -407,6 +428,41 @@ class NdbImageBuilder:
             amap=self.amap,
         )
 
+    def finalize_stream(
+        self,
+    ) -> tuple[UnicodeHeader, BTreeResult, BTreeResult]:
+        """Finalize a PST whose data blocks were written directly to sink."""
+
+        if self.sink is None:
+            raise RuntimeError(
+                "finalize_stream() requires a stream-backed NdbImageBuilder"
+            )
+
+        header, nbt, bbt = self._finalize_metadata()
+        root = header.root
+
+        self.sink.truncate(root.file_eof)
+        _write_stream_chunk(self.sink, 0, header.pack(), "HEADER")
+
+        for ib, data in self.amap.chunks:
+            _write_stream_chunk(
+                self.sink,
+                ib,
+                data,
+                f"AMap@{ib:#x}",
+            )
+
+        for page in (*nbt.pages, *bbt.pages):
+            _write_stream_chunk(
+                self.sink,
+                page.bref.ib,
+                page.data,
+                f"{page.page_type.name}@{page.bref.ib:#x}",
+            )
+
+        self.sink.flush()
+        return header, nbt, bbt
+
     def _store_external_values(
         self,
         values: tuple[ExternalValue, ...],
@@ -418,6 +474,22 @@ class NdbImageBuilder:
             tree = self.store_data_stream(value.data, c_ref=c_ref)
             result[value.nid] = StoredNode(data_bid=tree.root_bid)
         return result
+
+
+def _write_stream_chunk(
+    target: BinaryIO,
+    offset: int,
+    data: bytes,
+    label: str,
+) -> None:
+    if offset < 0:
+        raise ValueError(f"{label} has a negative offset")
+    target.seek(offset)
+    written = target.write(data)
+    if written is not None and written != len(data):
+        raise OSError(
+            f"short write for {label}: {written} of {len(data)} bytes"
+        )
 
 
 def build_minimal_ndb() -> NdbBuildResult:

@@ -137,6 +137,14 @@ def store_block_sequence(
 ) -> DataTreeImage:
     """Store a logical stream incrementally while preserving block boundaries."""
 
+    if not store.retain_blocks:
+        return _store_block_sequence_streaming(
+            store,
+            payloads,
+            logical_size=logical_size,
+            c_ref=c_ref,
+        )
+
     data_blocks: list[DataBlockImage] = []
     calculated_size = 0
 
@@ -211,6 +219,107 @@ def store_block_sequence(
         data_blocks=tuple(data_blocks),
         index_blocks=tuple(xblocks) + (xxblock,),
     )
+
+def _store_block_sequence_streaming(
+    store: DataBlockStore,
+    payloads: Iterable[bytes | bytearray | memoryview],
+    *,
+    logical_size: int | None,
+    c_ref: int,
+) -> DataTreeImage:
+    """Store data while retaining only one XBLOCK-sized BID window in memory."""
+
+    data_count = 0
+    calculated_size = 0
+    first_data_bid: int | None = None
+    group_bids: list[int] = []
+    group_size = 0
+    xblocks: list[tuple[int, int]] = []
+
+    def flush_group() -> None:
+        nonlocal group_bids, group_size
+        if not group_bids:
+            return
+        payload = pack_xblock(
+            group_bids,
+            total_size=group_size,
+            level=XBLOCK_LEVEL,
+        )
+        block = store.add_internal(payload, c_ref=c_ref)
+        xblocks.append((block.bref.bid, group_size))
+        group_bids = []
+        group_size = 0
+
+    for payload in payloads:
+        raw = bytes(payload)
+        if len(raw) > BLOCK_MAX_PAYLOAD:
+            raise ValueError(
+                f"data block payload exceeds {BLOCK_MAX_PAYLOAD} bytes"
+            )
+
+        block = store.add(raw, c_ref=c_ref, internal=False)
+        if first_data_bid is None:
+            first_data_bid = block.bref.bid
+        data_count += 1
+        calculated_size += len(raw)
+        group_bids.append(block.bref.bid)
+        group_size += len(raw)
+
+        if len(group_bids) == XBLOCK_MAX_ENTRIES:
+            flush_group()
+
+    if data_count == 0:
+        block = store.add(b"", c_ref=c_ref, internal=False)
+        first_data_bid = block.bref.bid
+        data_count = 1
+
+    if logical_size is None:
+        logical_size = calculated_size
+    elif logical_size != calculated_size:
+        raise ValueError(
+            "logical stream size does not match streamed payload bytes"
+        )
+
+    if not 0 <= logical_size <= UINT32_MAX:
+        raise ValueError("logical stream size must fit in 32 bits")
+
+    if data_count == 1:
+        assert first_data_bid is not None
+        return DataTreeImage(
+            root_bid=first_data_bid,
+            logical_size=logical_size,
+            data_blocks=(),
+            index_blocks=(),
+        )
+
+    flush_group()
+
+    if len(xblocks) == 1:
+        return DataTreeImage(
+            root_bid=xblocks[0][0],
+            logical_size=logical_size,
+            data_blocks=(),
+            index_blocks=(),
+        )
+
+    if len(xblocks) > XBLOCK_MAX_ENTRIES:
+        raise ValueError(
+            "data stream exceeds one XXBLOCK; deeper data trees are unsupported"
+        )
+
+    xx_payload = pack_xblock(
+        [bid for bid, _size in xblocks],
+        total_size=logical_size,
+        level=XXBLOCK_LEVEL,
+    )
+    xxblock = store.add_internal(xx_payload, c_ref=c_ref)
+    return DataTreeImage(
+        root_bid=xxblock.bref.bid,
+        logical_size=logical_size,
+        data_blocks=(),
+        index_blocks=(),
+    )
+
 
 def _index_level_from_block(block: DataBlockImage) -> int:
     payload = block.data[: block.payload_size]

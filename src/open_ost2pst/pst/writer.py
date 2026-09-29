@@ -26,6 +26,5 @@ class PstWriter:
             mailbox,
             store_name=self.store_name,
         )
-        result = builder.build()
-        result.pst.write(target)
+        builder.write(target)
         return report

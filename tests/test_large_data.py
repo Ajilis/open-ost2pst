@@ -1,3 +1,4 @@
+from io import BytesIO
 import struct
 
 from open_ost2pst.binary_payload import TemporaryBinaryPayload
@@ -99,6 +100,27 @@ def test_more_than_1021_data_blocks_uses_xxblock() -> None:
         tree.index_blocks[0].bref.bid,
         tree.index_blocks[1].bref.bid,
     )
+
+
+
+def test_streaming_store_bounds_large_data_metadata() -> None:
+    sink = BytesIO()
+    store = DataBlockStore(
+        offset_allocator=AmapAllocator().block_allocator(),
+        bid_allocator=BlockBidAllocator(4),
+        sink=sink,
+        retain_blocks=False,
+    )
+    raw = b"Q" * (BLOCK_MAX_PAYLOAD * 3 + 17)
+
+    tree = store_data_stream(store, raw)
+
+    assert tree.logical_size == len(raw)
+    assert tree.data_blocks == ()
+    assert tree.index_blocks == ()
+    assert len(store.blocks) == 0
+    assert len(store.bbt_entries) == 5
+    assert tree.root_bid & BID_INTERNAL
 
 
 def test_temporary_payload_streams_into_xblock() -> None:

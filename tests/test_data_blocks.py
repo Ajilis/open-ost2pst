@@ -1,3 +1,4 @@
+from io import BytesIO
 import struct
 
 import pytest
@@ -174,6 +175,25 @@ def test_data_block_store_generates_bbt_entries_automatically() -> None:
 
     assert store.bbt_entries == (first.bbt_entry, second.bbt_entry)
     assert store.blocks == (first, second)
+
+
+
+def test_data_block_store_can_stream_without_retaining_payloads() -> None:
+    sink = BytesIO()
+    store = DataBlockStore(
+        offset_allocator=BlockOffsetAllocator(0x8000),
+        bid_allocator=BlockBidAllocator(4),
+        sink=sink,
+        retain_blocks=False,
+    )
+
+    block = store.add(b"streamed payload")
+
+    assert store.blocks == ()
+    assert store.bbt_entries == (block.bbt_entry,)
+
+    sink.seek(block.bref.ib)
+    assert sink.read(len(block.data)) == block.data
 
 
 def test_store_extend_preserves_order_and_unique_bids() -> None:
