@@ -422,6 +422,9 @@ def test_large_attachment_uses_temporary_payload_and_cleanup(
     payload = mailbox.root.folders[0].messages[0].attachments[0].data
 
     assert isinstance(payload, TemporaryBinaryPayload)
+    payload_path = payload.path
+    assert payload_path.parent == source.parent
+    assert payload_path.exists()
     assert len(payload) == len(data)
     assert payload == data
     assert report.attachments_streamed == 1
@@ -430,3 +433,4 @@ def test_large_attachment_uses_temporary_payload_and_cleanup(
 
     mailbox.cleanup()
     assert payload.closed is True
+    assert payload_path.exists() is False
