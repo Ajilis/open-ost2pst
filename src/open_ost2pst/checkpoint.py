@@ -83,6 +83,7 @@ class ConversionJournal:
         self._thread: threading.Thread | None = None
         self._started_monotonic = time.monotonic()
         self._partial_path: Path | None = None
+        self._reports: dict[str, Any] = {}
         self._last_stage: str | None = None
         self._last_write_error: str | None = None
 
@@ -223,6 +224,11 @@ class ConversionJournal:
         with self._lock:
             snapshot = deepcopy(self._state)
             partial_path = self._partial_path
+            reports = dict(self._reports)
+
+        for key, report in reports.items():
+            value = report.to_dict() if hasattr(report, "to_dict") else report
+            snapshot[key] = deepcopy(value)
 
         snapshot["elapsed_seconds"] = round(
             max(0.0, time.monotonic() - self._started_monotonic),
@@ -262,9 +268,11 @@ class ConversionJournal:
         atomic_write_json(self.report_path, report, durable=durable)
 
     def _set_report(self, key: str, report: Any) -> None:
-        value = report.to_dict() if hasattr(report, "to_dict") else report
+        # Keep the live report object in RAM and serialize it only when a
+        # checkpoint is actually written. Extraction/writing callbacks can run
+        # tens of thousands of times, so this avoids repeated dataclass copies.
         with self._lock:
-            self._state[key] = deepcopy(value)
+            self._reports[key] = report
 
     def _output_snapshot(self, partial_path: Path | None) -> dict[str, Any]:
         output: dict[str, Any] = {
