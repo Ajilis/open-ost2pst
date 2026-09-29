@@ -24,9 +24,13 @@ class _FakeBuildResult:
 
 
 class _FakeBuilder:
-    def write(self, path: str | Path) -> Path:
+    def write(self, path: str | Path, *, partial_callback=None) -> Path:
         target = Path(path)
-        target.write_bytes(b"!BDNfake")
+        partial = target.with_name(f".{target.name}.test.partial")
+        partial.write_bytes(b"!BDNfake")
+        if partial_callback is not None:
+            partial_callback(partial)
+        partial.replace(target)
         return target
 
 
@@ -130,6 +134,20 @@ def test_convert_file_reports_monotonic_progress(
     assert destination.read_bytes() == b"!BDNfake"
     assert report_path.is_file()
 
+    checkpoint_path = destination.with_suffix(".conversion-state.json")
+    assert checkpoint_path.is_file()
+    checkpoint = __import__("json").loads(
+        checkpoint_path.read_text(encoding="utf-8")
+    )
+    assert checkpoint["status"] == "success"
+    assert checkpoint["percent"] == 100
+    assert checkpoint["output"]["destination_exists"] is True
+
+    report_data = __import__("json").loads(
+        report_path.read_text(encoding="utf-8")
+    )
+    assert report_data["status"] == "success"
+
     percentages = [update.percent for update in updates]
     assert percentages[0] == 0
     assert percentages[-1] == 100
@@ -210,3 +228,43 @@ def test_convert_file_raises_when_verification_fails(
 
     assert exc_info.value.result.destination == destination
     assert exc_info.value.result.verification.mismatch_count == 2
+
+
+def test_convert_file_persists_failure_report_and_checkpoint(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "source.ost"
+    source.write_bytes(b"source")
+    destination = tmp_path / "failed.pst"
+    report_path = tmp_path / "failed.report.json"
+
+    monkeypatch.setattr(
+        "open_ost2pst.conversion.inspect_store",
+        lambda path: (_ for _ in ()).throw(RuntimeError("inspection exploded")),
+    )
+
+    with pytest.raises(RuntimeError, match="inspection exploded"):
+        convert_file(
+            source,
+            destination,
+            report_path=report_path,
+            checkpoint_interval_seconds=0,
+        )
+
+    import json
+
+    checkpoint = json.loads(
+        destination.with_suffix(".conversion-state.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+
+    assert checkpoint["status"] == "failed"
+    assert checkpoint["stage"] == "Analyse de la source"
+    assert checkpoint["error"]["type"] == "RuntimeError"
+    assert checkpoint["error"]["message"] == "inspection exploded"
+    assert "inspection exploded" in checkpoint["error"]["traceback"]
+    assert report["status"] == "failed"
+    assert report["error"]["type"] == "RuntimeError"

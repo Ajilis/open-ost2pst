@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 from pathlib import Path
+import traceback
 from typing import Callable
 
+from open_ost2pst.checkpoint import (
+    DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
+    ConversionJournal,
+)
 from open_ost2pst.pst.bridge import WriteReport, mailbox_to_messaging
 from open_ost2pst.reader.pff_reader import (
     ExtractionReport,
@@ -69,8 +73,10 @@ def convert_file(
     report_path: str | Path | None = None,
     overwrite: bool = False,
     progress_callback: ProgressCallback | None = None,
+    checkpoint_path: str | Path | None = None,
+    checkpoint_interval_seconds: float = DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
 ) -> ConversionResult:
-    """Convert one OST/PST to PST and report deterministic progress.
+    """Convert one OST/PST to PST with low-overhead persistent checkpoints.
 
     Progress ranges are weighted as follows:
     0-5   preflight/inspection
@@ -78,6 +84,11 @@ def convert_file(
     55-80 mailbox-to-PST mapping
     80-90 PST construction/write
     90-100 verification/reporting
+
+    A small conversion-state JSON file is maintained independently of the
+    optional final report. Progress updates change checkpoint state in RAM.
+    Disk writes occur on stage transitions plus one periodic checkpoint
+    (60 seconds by default), avoiding per-message journal I/O.
     """
 
     source_path = Path(source)
@@ -94,64 +105,80 @@ def convert_file(
 
     destination_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def emit(percent: int, stage: str, detail: str = "") -> None:
-        if progress_callback is not None:
-            progress_callback(
-                ConversionProgress(
-                    percent=max(0, min(100, int(percent))),
-                    stage=stage,
-                    detail=detail,
-                )
-            )
-
-    emit(0, "Préparation", source_path.name)
-    emit(2, "Analyse de la source", "Comptage des éléments")
-    inspection = inspect_store(source_path)
-
-    extraction_total = max(
-        1,
-        inspection.folders + inspection.messages + inspection.attachments,
-    )
-    emit(
-        5,
-        "Extraction OST",
-        (
-            f"{inspection.folders} dossiers, "
-            f"{inspection.messages} messages, "
-            f"{inspection.attachments} pièces jointes"
-        ),
-    )
-
-    def extraction_progress(report: ExtractionReport) -> None:
-        done = (
-            report.folders_loaded
-            + report.folders_failed
-            + report.messages_loaded
-            + report.messages_failed
-            + report.attachments_loaded
-            + report.attachments_failed
-        )
-        percent = 5 + min(50, round(50 * done / extraction_total))
-        emit(percent, "Extraction OST", f"{min(done, extraction_total)}/{extraction_total}")
-
-    mailbox, extraction = load_mailbox(
+    journal = ConversionJournal(
         source_path,
-        progress_callback=extraction_progress,
+        destination_path,
+        state_path=checkpoint_path,
+        report_path=report_path,
+        interval_seconds=checkpoint_interval_seconds,
     )
+    mailbox = None
+    journal.start()
+
+    def emit(percent: int, stage: str, detail: str = "") -> None:
+        update = ConversionProgress(
+            percent=max(0, min(100, int(percent))),
+            stage=stage,
+            detail=detail,
+        )
+        journal.update_progress(update.percent, update.stage, update.detail)
+        if progress_callback is not None:
+            progress_callback(update)
 
     try:
+        emit(0, "Préparation", source_path.name)
+        emit(2, "Analyse de la source", "Comptage des éléments")
+        inspection = inspect_store(source_path)
+        journal.set_inspection(inspection)
+
+        extraction_total = max(
+            1,
+            inspection.folders + inspection.messages + inspection.attachments,
+        )
+        emit(
+            5,
+            "Extraction OST",
+            (
+                f"{inspection.folders} dossiers, "
+                f"{inspection.messages} messages, "
+                f"{inspection.attachments} pièces jointes"
+            ),
+        )
+
+        def extraction_progress(report: ExtractionReport) -> None:
+            journal.set_extraction(report)
+            done = (
+                report.folders_loaded
+                + report.folders_failed
+                + report.messages_loaded
+                + report.messages_failed
+                + report.attachments_loaded
+                + report.attachments_failed
+            )
+            percent = 5 + min(50, round(50 * done / extraction_total))
+            emit(
+                percent,
+                "Extraction OST",
+                f"{min(done, extraction_total)}/{extraction_total}",
+            )
+
+        mailbox, extraction = load_mailbox(
+            source_path,
+            progress_callback=extraction_progress,
+        )
+        journal.set_extraction(extraction)
+
         emit(55, "Extraction terminée", f"{mailbox.message_count} messages")
 
         write_total = max(
             1,
-            (
-                mailbox.folder_count
-                + mailbox.message_count
-                + mailbox.attachment_count
-            ),
+            mailbox.folder_count
+            + mailbox.message_count
+            + mailbox.attachment_count,
         )
 
         def writing_progress(report: WriteReport) -> None:
+            journal.set_writing(report)
             done = (
                 report.folders_written
                 + report.messages_written
@@ -169,13 +196,17 @@ def convert_file(
             mailbox,
             progress_callback=writing_progress,
         )
+        journal.set_writing(writing)
 
         emit(
             80,
             "Construction et écriture du PST",
             "Streaming NDB/LTP/Messaging vers le disque",
         )
-        builder.write(destination_path)
+        builder.write(
+            destination_path,
+            partial_callback=journal.set_partial_path,
+        )
 
         emit(87, "PST écrit sur disque", destination_path.name)
         emit(92, "Vérification", "Réouverture avec libpff")
@@ -184,6 +215,7 @@ def convert_file(
             mailbox,
             source_label=str(source_path),
         )
+        journal.set_verification(verification)
 
         result = ConversionResult(
             source=source_path,
@@ -194,28 +226,38 @@ def convert_file(
             verification=verification,
         )
 
-        if report_path is not None:
-            emit(97, "Rapport", Path(report_path).name)
-            report_target = Path(report_path)
-            report_target.parent.mkdir(parents=True, exist_ok=True)
-            report_target.write_text(
-                json.dumps(
-                    result.to_dict(),
-                    indent=2,
-                    sort_keys=True,
-                ),
-                encoding="utf-8",
-            )
-
         if not verification.ok:
             emit(
                 100,
                 "Vérification échouée",
                 f"{verification.mismatch_count} écart(s)",
             )
+            journal.mark_verification_failed(verification.mismatch_count)
+            journal.write_final_report()
             raise ConversionVerificationError(result)
 
+        if report_path is not None:
+            emit(97, "Rapport", Path(report_path).name)
+
         emit(100, "Terminé", destination_path.name)
+        journal.mark_success()
+        journal.write_final_report()
         return result
+
+    except ConversionVerificationError:
+        raise
+    except Exception as exc:
+        journal.mark_failed(
+            exc,
+            traceback_text=traceback.format_exc(),
+        )
+        try:
+            journal.write_final_report()
+        except OSError:
+            # A reporting failure must not hide the original conversion error.
+            pass
+        raise
     finally:
-        mailbox.cleanup()
+        journal.close()
+        if mailbox is not None:
+            mailbox.cleanup()

@@ -63,6 +63,15 @@ It lets users select the source OST/PST, choose a destination directory, set the
 PST filename, follow a real 0-100% progress bar, and optionally write a JSON
 conversion report. The generated PST is automatically reopened and verified.
 
+Every conversion also maintains a small crash-resilient
+`*.conversion-state.json` checkpoint beside the destination. Progress is
+updated in RAM and persisted only on stage transitions plus a periodic
+60-second checkpoint, so there is no per-message journal I/O. The checkpoint
+records the current stage, counters, the destination-side `.partial` PST size,
+timestamps, and any caught exception/traceback. If the GUI finds a prior
+checkpoint still marked `running`, it warns before starting a new conversion
+and archives the old state file.
+
 Local Python launch:
 
 ```bash
@@ -97,6 +106,8 @@ open-ost2pst verify mailbox.pst --source mailbox.ost --report verify.json
 Large variable properties, multi-block HN streams, large Row Matrices, zero-length binary values, and large attachments are supported through LTP subnodes plus XBLOCK/XXBLOCK data trees. Attachments larger than 1 MiB are extracted in 1 MiB chunks into auto-cleaned temporary payloads, then streamed through verification and the XBLOCK writer instead of being concatenated into a single large Python bytes object. XBLOCK/XXBLOCK covers the maximum two-level data-tree indirection defined by MS-PST. Subnode BTrees automatically use SIBLOCK roots when more than 340 local subnodes are present, supporting up to 173,400 subnodes per local tree. RTF bodies are preserved through PidTagRtfCompressed using a standards-compliant literal-only LZFu stream and are hash-verified after libpff reopen.
 
 Production PST construction is disk-streamed: physical PST blocks are written to a temporary `.partial` file in the destination directory as they are produced, and the final HEADER/AMap/NBT/BBT structures are patched in before an atomic rename to the requested `.pst`. The normal conversion path therefore no longer retains the complete PST image (or a second full-size `bytes` copy) in RAM. Memory usage still includes the intermediate mailbox model and BTree metadata, so very large stores still require sensible free RAM/page-file capacity and sufficient destination disk space.
+
+Conversion state is independently checkpointed throughout long-running operations. This means a power loss, process termination, or native crash can still leave a recent on-disk record of the last known stage (normally no more than about 60 seconds old), while ordinary Python exceptions are recorded immediately with their traceback. Final JSON reports are written atomically as well.
 
 Generated PSTs now include the standard physical minimum hierarchy (Root Folder, IPM subtree, Deleted Items, Search Root, and Spam Search Folder) while the format-neutral mailbox model continues to expose the IPM subtree as its logical root. The writer also emits the Name-to-ID Map and supports real named properties in the 0x8000–0x8FFF range. Property ID 0x8000 is reserved internally as a compatibility sentinel so old libpff releases can parse non-empty NameID streams; user named properties are allocated from 0x8001.
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+import json
 import os
 from pathlib import Path
 import queue
@@ -15,6 +17,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from open_ost2pst import __version__
+from open_ost2pst.checkpoint import default_checkpoint_path
 from open_ost2pst.conversion import (
     ConversionProgress,
     ConversionVerificationError,
@@ -365,6 +368,52 @@ class OpenOst2PstApp:
             if not overwrite:
                 return
 
+        checkpoint_path = default_checkpoint_path(destination)
+        if checkpoint_path.is_file():
+            try:
+                previous_state = json.loads(
+                    checkpoint_path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                previous_state = None
+
+            if (
+                isinstance(previous_state, dict)
+                and previous_state.get("status") == "running"
+            ):
+                stage = previous_state.get("stage") or "inconnue"
+                percent = previous_state.get("percent")
+                checkpoint_time = (
+                    previous_state.get("last_checkpoint") or "inconnu"
+                )
+                answer = messagebox.askyesno(
+                    APP_NAME,
+                    "Une conversion précédente semble avoir été interrompue "
+                    "ou est peut-être encore active.\n\n"
+                    f"Étape : {stage}\n"
+                    f"Progression : {percent} %\n"
+                    f"Dernier checkpoint : {checkpoint_time}\n\n"
+                    "Démarrer une nouvelle conversion ? "
+                    "L'ancien état sera archivé.",
+                )
+                if not answer:
+                    return
+
+                timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                archived = checkpoint_path.with_name(
+                    f"{checkpoint_path.stem}.interrupted-{timestamp}"
+                    f"{checkpoint_path.suffix}"
+                )
+                try:
+                    checkpoint_path.replace(archived)
+                except OSError as exc:
+                    messagebox.showerror(
+                        APP_NAME,
+                        "Impossible d'archiver l'état de la conversion "
+                        f"précédente :\n{exc}",
+                    )
+                    return
+
         self._set_running(True)
         self.progress_var.set(0)
         self.percent_var.set("0 %")
@@ -372,6 +421,9 @@ class OpenOst2PstApp:
         self._clear_log()
         self._append_log(f"Source      : {source}")
         self._append_log(f"Destination : {destination}")
+        self._append_log(
+            f"État        : {default_checkpoint_path(destination)}"
+        )
         if report_path is not None:
             self._append_log(f"Rapport     : {report_path}")
 

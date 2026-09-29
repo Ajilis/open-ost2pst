@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import os
 from pathlib import Path
 import tempfile
+from typing import Callable
 
 from open_ost2pst.binary_payload import (
     BinaryData,
@@ -430,7 +431,12 @@ class MessagingBuilder:
         counts = self._populate_ndb(ndb)
         return self._build_result(ndb.build(), counts)
 
-    def write(self, path: str | Path) -> Path:
+    def write(
+        self,
+        path: str | Path,
+        *,
+        partial_callback: Callable[[Path], None] | None = None,
+    ) -> Path:
         """Build the PST directly into a temporary file and atomically publish it."""
 
         destination = Path(path)
@@ -446,6 +452,8 @@ class MessagingBuilder:
                 delete=False,
             ) as handle:
                 temporary = Path(handle.name)
+                if partial_callback is not None:
+                    partial_callback(temporary)
                 ndb = NdbImageBuilder(sink=handle)
                 self._populate_ndb(ndb)
                 ndb.finalize_stream()
