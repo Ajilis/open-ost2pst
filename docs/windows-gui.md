@@ -13,6 +13,8 @@ The GUI provides:
 - optional JSON conversion report;
 - determinate progress bar from 0 to 100 percent;
 - live conversion stage and log;
+- crash-resilient conversion-state checkpoint beside the destination;
+- interrupted-run detection and state-file archiving before restart;
 - automatic reopening and verification of the generated PST;
 - source-file overwrite protection.
 
@@ -30,6 +32,33 @@ The percentage is based on real conversion work:
 
 The extraction and mapping ranges advance from processed
 folders/messages/attachments, rather than using a cosmetic timer.
+
+## Crash-resilient conversion state
+
+Every conversion maintains a small file beside the requested PST:
+
+    <name>.conversion-state.json
+
+Counters and progress are updated in memory. The state file is written only
+when the logical stage changes and approximately once every 60 seconds during
+long stages. Periodic checkpoints do not force an fsync; stage boundaries and
+terminal states do. This avoids per-message journal writes while still leaving
+a recent trace after a power loss, forced process termination, or native crash.
+
+The state records the source and destination, timestamps, current stage and
+percentage, extraction/writing/verification counters, caught exception details,
+and the current size/path of the destination-side `.partial` PST while it is
+being constructed.
+
+Caught Python exceptions are checkpointed immediately with their traceback.
+When the GUI sees a prior checkpoint still marked `running`, it displays the
+last known stage and timestamp. If the user elects to start over, the previous
+state file is archived with an `interrupted-YYYYMMDD-HHMMSS` suffix before the
+new run starts.
+
+The optional `*.report.json` remains the final report. It is now written
+atomically from the same state model and can contain `success`, `failed`, or
+`verification_failed` status information.
 
 ## CI artifact
 
