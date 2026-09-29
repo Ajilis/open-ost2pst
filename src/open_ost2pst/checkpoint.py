@@ -79,6 +79,7 @@ class ConversionJournal:
         self.interval_seconds = float(interval_seconds)
 
         self._lock = threading.RLock()
+        self._write_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._started_monotonic = time.monotonic()
@@ -244,15 +245,16 @@ class ConversionJournal:
         """Best-effort checkpoint write that never aborts the conversion."""
 
         payload = self.snapshot()
-        try:
-            atomic_write_json(self.state_path, payload, durable=durable)
-        except OSError as exc:
-            self._last_write_error = f"{type(exc).__name__}: {exc}"
-        else:
-            with self._lock:
-                # Keep in-memory timestamps aligned with what reached disk.
-                self._state["last_checkpoint"] = payload["last_checkpoint"]
-                self._state["elapsed_seconds"] = payload["elapsed_seconds"]
+        with self._write_lock:
+            try:
+                atomic_write_json(self.state_path, payload, durable=durable)
+            except OSError as exc:
+                self._last_write_error = f"{type(exc).__name__}: {exc}"
+            else:
+                with self._lock:
+                    # Keep in-memory timestamps aligned with what reached disk.
+                    self._state["last_checkpoint"] = payload["last_checkpoint"]
+                    self._state["elapsed_seconds"] = payload["elapsed_seconds"]
 
     def write_final_report(
         self,
