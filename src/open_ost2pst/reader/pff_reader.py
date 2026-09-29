@@ -695,6 +695,7 @@ def _attachment_chunks(
 def _attachment_data(
     attachment: Any,
     report: ExtractionReport,
+    temporary_directory: Path,
 ) -> BinaryData:
     size = _int_attr(attachment, "size")
     if size == 0:
@@ -708,6 +709,7 @@ def _attachment_data(
     payload = TemporaryBinaryPayload.from_chunks(
         chunks,
         max_bytes=size,
+        directory=temporary_directory,
     )
     report.attachments_streamed += 1
     report.attachment_temp_bytes += len(payload)
@@ -718,6 +720,7 @@ def _extract_attachment(
     attachment: Any,
     report: ExtractionReport,
     nameid_definitions: dict[int, _NameIdDefinition],
+    temporary_directory: Path,
 ) -> Attachment:
     filename = _safe_attr(attachment, "long_filename")
     if not filename:
@@ -748,6 +751,7 @@ def _extract_attachment(
                 embedded_item,
                 report,
                 nameid_definitions,
+                temporary_directory=temporary_directory,
             )
         else:
             report.warn(
@@ -759,7 +763,11 @@ def _extract_attachment(
         data=(
             b""
             if embedded_message is not None
-            else _attachment_data(attachment, report)
+            else _attachment_data(
+                attachment,
+                report,
+                temporary_directory,
+            )
         ),
         mime_type=mime_type,
         content_id=_property_string(attachment, PR_ATTACH_CONTENT_ID),
@@ -785,6 +793,8 @@ def _extract_message(
     report: ExtractionReport,
     nameid_definitions: dict[int, _NameIdDefinition],
     progress_callback: Callable[[ExtractionReport], None] | None = None,
+    *,
+    temporary_directory: Path,
 ) -> Message:
     flags = _property_integer(message, PR_MESSAGE_FLAGS)
 
@@ -845,6 +855,7 @@ def _extract_message(
                     attachment,
                     report,
                     nameid_definitions,
+                    temporary_directory,
                 )
             )
             report.attachments_loaded += 1
@@ -863,6 +874,8 @@ def _extract_folder(
     fallback_name: str,
     nameid_definitions: dict[int, _NameIdDefinition],
     progress_callback: Callable[[ExtractionReport], None] | None = None,
+    *,
+    temporary_directory: Path,
 ) -> Folder:
     report.folders_seen += 1
     name = _safe_attr(folder, "name") or fallback_name
@@ -886,6 +899,7 @@ def _extract_folder(
                     report,
                     nameid_definitions,
                     progress_callback,
+                    temporary_directory=temporary_directory,
                 )
             )
             report.messages_loaded += 1
@@ -914,6 +928,7 @@ def _extract_folder(
                 fallback_name=f"Folder {index + 1}",
                 nameid_definitions=nameid_definitions,
                 progress_callback=progress_callback,
+                temporary_directory=temporary_directory,
             )
         )
 
@@ -1012,6 +1027,7 @@ def load_mailbox(
     pypff = _load_pypff()
     store = pypff.file()
     report = ExtractionReport(path=str(source))
+    temporary_directory = source.resolve().parent
 
     try:
         store.open(str(source))
@@ -1024,6 +1040,7 @@ def load_mailbox(
                 fallback_name="Top of Personal Folders",
                 nameid_definitions=nameid_definitions,
                 progress_callback=progress_callback,
+                temporary_directory=temporary_directory,
             )
         )
     finally:
