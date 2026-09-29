@@ -170,12 +170,14 @@ def convert_file(
             progress_callback=writing_progress,
         )
 
-        emit(80, "Construction du PST", "Assemblage NDB/LTP/Messaging")
-        built = builder.build()
+        emit(
+            80,
+            "Construction et écriture du PST",
+            "Streaming NDB/LTP/Messaging vers le disque",
+        )
+        builder.write(destination_path)
 
-        emit(87, "Écriture du PST", destination_path.name)
-        built.pst.write(destination_path)
-
+        emit(87, "PST écrit sur disque", destination_path.name)
         emit(92, "Vérification", "Réouverture avec libpff")
         verification = verify_against_mailbox(
             destination_path,
