@@ -48,6 +48,33 @@ def test_minimal_ndb_assembles_header_amap_block_nbt_and_bbt() -> None:
     )
 
 
+
+def test_stream_backed_builder_writes_valid_pst_without_retaining_blocks(
+    tmp_path,
+) -> None:
+    destination = tmp_path / "streamed.pst"
+
+    with destination.open("w+b") as handle:
+        builder = NdbImageBuilder(sink=handle)
+        block = builder.add_block(b"stream me")
+        builder.add_node(0x21, block.bref.bid)
+        header, nbt, bbt = builder.finalize_stream()
+
+    image = destination.read_bytes()
+
+    assert image[:4] == b"!BDN"
+    assert len(image) == header.root.file_eof
+    assert builder.blocks == ()
+    assert len(builder.bbt_entries) == 1
+
+    root = Root.unpack(image[OFFSET_ROOT : OFFSET_ROOT + ROOT_SIZE])
+    assert root.nbt_root == nbt.root
+    assert root.bbt_root == bbt.root
+
+    stored = builder.bbt_entries[0]
+    assert image[stored.ib : stored.ib + len(block.data)] == block.data
+
+
 def test_built_header_counters_point_after_allocated_ids() -> None:
     result = build_minimal_ndb()
     image = result.data
