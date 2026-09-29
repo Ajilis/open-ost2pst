@@ -88,3 +88,36 @@ def test_atomic_checkpoint_file_contains_failure_details(tmp_path) -> None:
     assert payload["error"]["message"] == "broken item"
     assert "broken item" in payload["error"]["traceback"]
     assert not state_path.with_name(state_path.name + ".tmp").exists()
+
+
+def test_live_reports_are_serialized_only_when_checkpoint_is_taken(
+    tmp_path,
+) -> None:
+    class Report:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.value = 1
+
+        def to_dict(self):
+            self.calls += 1
+            return {"value": self.value}
+
+    report = Report()
+    journal = ConversionJournal(
+        tmp_path / "source.ost",
+        tmp_path / "output.pst",
+        interval_seconds=0,
+    )
+    journal.start()
+
+    for value in range(100):
+        report.value = value
+        journal.set_extraction(report)
+
+    assert report.calls == 0
+
+    snapshot = journal.snapshot()
+    journal.close()
+
+    assert report.calls == 1
+    assert snapshot["extraction"] == {"value": 99}
