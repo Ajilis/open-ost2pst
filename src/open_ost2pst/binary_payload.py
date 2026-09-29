@@ -9,6 +9,7 @@ explicitly when a conversion is complete.
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 import tempfile
 from typing import BinaryIO, Iterable, Iterator, TypeAlias
 
@@ -17,18 +18,20 @@ DEFAULT_BINARY_CHUNK_SIZE = 1024 * 1024
 
 
 class TemporaryBinaryPayload:
-    """Seekable temporary binary payload with cached size and SHA-256."""
+    """Seekable named temporary payload with cached size and SHA-256."""
 
-    __slots__ = ("_file", "_size", "_sha256", "_closed")
+    __slots__ = ("_file", "_path", "_size", "_sha256", "_closed")
 
     def __init__(
         self,
         file_object: BinaryIO,
         *,
+        path: str | Path,
         size: int,
         sha256: str,
     ) -> None:
         self._file = file_object
+        self._path = Path(path)
         self._size = size
         self._sha256 = sha256
         self._closed = False
@@ -39,8 +42,18 @@ class TemporaryBinaryPayload:
         chunks: Iterable[bytes | bytearray | memoryview],
         *,
         max_bytes: int | None = None,
+        directory: str | Path | None = None,
+        prefix: str = ".open-ost2pst-",
     ) -> "TemporaryBinaryPayload":
-        handle = tempfile.TemporaryFile(mode="w+b")
+        temp_directory = None if directory is None else str(Path(directory))
+        handle = tempfile.NamedTemporaryFile(
+            mode="w+b",
+            dir=temp_directory,
+            prefix=prefix,
+            suffix=".tmp",
+            delete=False,
+        )
+        path = Path(handle.name)
         digest = hashlib.sha256()
         size = 0
         try:
@@ -59,12 +72,21 @@ class TemporaryBinaryPayload:
             handle.seek(0)
             return cls(
                 handle,
+                path=path,
                 size=size,
                 sha256=digest.hexdigest(),
             )
         except Exception:
             handle.close()
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
             raise
+
+    @property
+    def path(self) -> Path:
+        return self._path
 
     @property
     def size(self) -> int:
@@ -105,7 +127,15 @@ class TemporaryBinaryPayload:
         if self._closed:
             return
         self._closed = True
-        self._file.close()
+        try:
+            self._file.close()
+        finally:
+            try:
+                self._path.unlink(missing_ok=True)
+            except OSError:
+                # Best effort in object finalization. Explicit conversion
+                # cleanup still closes every temporary payload deterministically.
+                pass
 
     def __len__(self) -> int:
         return self._size
