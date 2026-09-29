@@ -27,7 +27,7 @@ class _FakeBuilder:
     def write(self, path: str | Path, *, partial_callback=None) -> Path:
         target = Path(path)
         partial = target.with_name(f".{target.name}.test.partial")
-        partial.write_bytes(b"!BDNpartial")
+        partial.write_bytes(b"!BDNfake")
         if partial_callback is not None:
             partial_callback(partial)
         partial.replace(target)
