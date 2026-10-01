@@ -274,3 +274,34 @@ def test_tc_can_be_embedded_as_ndb_node() -> None:
     assert node.data_bid == result.blocks[0].bref.bid
     assert result.blocks[0].data[2] == 0xEC
     assert result.blocks[0].data[3] == HeapClientSignature.TABLE_CONTEXT
+
+
+def test_external_tc_row_matrix_declares_row_aligned_block_payload() -> None:
+    table = TableContext()
+    table.add_column(0x0017, PropertyType.INTEGER32)
+    table.add_column(0x0036, PropertyType.INTEGER32)
+    table.add_column(0x0E07, PropertyType.INTEGER32)
+
+    for index in range(390):
+        table.add_row(
+            0x200000 + index,
+            {
+                0x0017: 1,
+                0x0036: 0,
+                0x0E07: 1,
+            },
+        )
+
+    image = table.build()
+    matrix_value = next(
+        value
+        for value in image.external_values
+        if value.nid == image.row_matrix_hnid
+    )
+
+    expected_payload = (
+        BLOCK_MAX_PAYLOAD // image.layout.row_size
+    ) * image.layout.row_size
+    assert matrix_value.block_payload_size == expected_payload
+    assert matrix_value.block_payload_size % image.layout.row_size == 0
+    assert matrix_value.pad_nonfinal_to_max is True
