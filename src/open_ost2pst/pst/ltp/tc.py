@@ -19,6 +19,7 @@ from .heap import (
 )
 from .pc import PropertyType
 from .storage import ExternalValue, LtpNidAllocator
+from ..primitives import BLOCK_MAX_PAYLOAD
 
 
 PID_LTP_ROW_ID = 0x67F2
@@ -207,10 +208,18 @@ class TableContext:
                 row_matrix_hnid = heap.allocate(matrix)
             else:
                 row_matrix_hnid = nid_allocator.allocate()
+                rows_per_block = BLOCK_MAX_PAYLOAD // layout.row_size
+                if rows_per_block < 1:
+                    raise ValueError(
+                        "TC row is too large to fit in one NDB data block"
+                    )
+                row_block_payload_size = rows_per_block * layout.row_size
                 external_values.append(
                     ExternalValue(
                         nid=row_matrix_hnid,
                         data=bytes(matrix),
+                        block_payload_size=row_block_payload_size,
+                        pad_nonfinal_to_max=True,
                     )
                 )
         else:
