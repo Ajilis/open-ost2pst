@@ -514,7 +514,7 @@ def _iter_external_value_blocks(
     for following in chunks:
         raw = bytes(current)
         if pad_nonfinal_to_max and len(raw) < BLOCK_MAX_PAYLOAD:
-            raw += b"\\x00" * (BLOCK_MAX_PAYLOAD - len(raw))
+            raw += b"\x00" * (BLOCK_MAX_PAYLOAD - len(raw))
         yield raw
         current = following
 
