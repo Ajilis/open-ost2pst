@@ -483,5 +483,6 @@ def test_missing_message_is_reported_without_order_cascade() -> None:
     ]
     assert len(presence) == 1
     assert "<2@example.com>" in presence[0].path
-    assert count == 2
+    # global count + folder count + one stable message-presence mismatch
+    assert count == 3
     assert truncated is False
