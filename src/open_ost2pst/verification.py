@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from collections import defaultdict, deque
 import hashlib
 
 from open_ost2pst.binary_payload import binary_sha256, binary_size
@@ -153,7 +154,12 @@ def compare_manifests(
     source: StoreManifest,
     destination: StoreManifest,
 ) -> tuple[tuple[VerificationMismatch, ...], int, bool]:
-    """Compare manifests while preserving folder/message/attachment order."""
+    """Compare manifests by folder path and stable message identity.
+
+    Generated PST stores contain one mandatory empty top-level Deleted Items
+    folder even when the source OST does not expose that folder at the same
+    location. That synthetic folder is ignored for comparison purposes.
+    """
 
     reported: list[VerificationMismatch] = []
     mismatch_count = 0
@@ -178,55 +184,108 @@ def compare_manifests(
                 )
             )
 
-    for field in ("folder_count", "message_count", "attachment_count"):
+    ignored_destination_paths = _synthetic_destination_folder_paths(
+        source,
+        destination,
+    )
+
+    effective_destination_folder_count = (
+        destination.folder_count - len(ignored_destination_paths)
+    )
+    if source.folder_count != effective_destination_folder_count:
+        add(
+            "count",
+            "/",
+            "folder_count",
+            source.folder_count,
+            effective_destination_folder_count,
+        )
+
+    for field in ("message_count", "attachment_count"):
         expected = getattr(source, field)
         actual = getattr(destination, field)
         if expected != actual:
             add("count", "/", field, expected, actual)
 
-    max_folders = max(len(source.folders), len(destination.folders))
-    for folder_index in range(max_folders):
-        if folder_index >= len(source.folders):
-            extra = destination.folders[folder_index]
-            add("folder", extra.path, "presence", None, "extra")
-            continue
-        if folder_index >= len(destination.folders):
-            missing = source.folders[folder_index]
-            add("folder", missing.path, "presence", "present", None)
-            continue
-
-        expected_folder = source.folders[folder_index]
-        actual_folder = destination.folders[folder_index]
-
-        if expected_folder.path != actual_folder.path:
-            add(
-                "folder",
-                expected_folder.path,
-                "path",
-                expected_folder.path,
-                actual_folder.path,
-            )
-
-        if expected_folder.message_count != actual_folder.message_count:
-            add(
-                "folder",
-                expected_folder.path,
-                "message_count",
-                expected_folder.message_count,
-                actual_folder.message_count,
-            )
-
-        _compare_messages(
-            expected_folder,
-            actual_folder,
-            add,
+    source_groups = _folders_by_path(source.folders)
+    destination_groups = _folders_by_path(
+        tuple(
+            folder
+            for folder in destination.folders
+            if folder.path not in ignored_destination_paths
         )
+    )
+
+    all_paths = sorted(set(source_groups) | set(destination_groups))
+    for path in all_paths:
+        expected_folders = source_groups.get(path, ())
+        actual_folders = destination_groups.get(path, ())
+        pair_count = min(len(expected_folders), len(actual_folders))
+
+        for duplicate_index in range(pair_count):
+            expected_folder = expected_folders[duplicate_index]
+            actual_folder = actual_folders[duplicate_index]
+
+            if expected_folder.message_count != actual_folder.message_count:
+                add(
+                    "folder",
+                    path,
+                    "message_count",
+                    expected_folder.message_count,
+                    actual_folder.message_count,
+                )
+
+            _compare_messages(
+                expected_folder,
+                actual_folder,
+                add,
+            )
+
+        for missing in expected_folders[pair_count:]:
+            add("folder", missing.path, "presence", "present", None)
+
+        for extra in actual_folders[pair_count:]:
+            add("folder", extra.path, "presence", None, "extra")
 
     return (
         tuple(reported),
         mismatch_count,
         mismatch_count > len(reported),
     )
+
+
+def _folders_by_path(
+    folders: tuple[FolderFingerprint, ...],
+) -> dict[str, tuple[FolderFingerprint, ...]]:
+    grouped: dict[str, list[FolderFingerprint]] = defaultdict(list)
+    for folder in folders:
+        grouped[folder.path].append(folder)
+    return {path: tuple(items) for path, items in grouped.items()}
+
+
+def _synthetic_destination_folder_paths(
+    source: StoreManifest,
+    destination: StoreManifest,
+) -> set[str]:
+    """Identify the writer-created empty top-level Deleted Items folder."""
+
+    if not destination.folders:
+        return set()
+
+    source_paths = {folder.path for folder in source.folders}
+    root_path = destination.folders[0].path.rstrip("/")
+    synthetic_path = f"{root_path}/Deleted Items"
+    if synthetic_path in source_paths:
+        return set()
+
+    candidates = [
+        folder
+        for folder in destination.folders
+        if folder.path == synthetic_path and folder.message_count == 0
+    ]
+    if len(candidates) == 1:
+        return {synthetic_path}
+    return set()
 
 
 def verify_against_mailbox(
@@ -476,20 +535,13 @@ def _compare_messages(
     destination: FolderFingerprint,
     add: Any,
 ) -> None:
-    max_messages = max(len(source.messages), len(destination.messages))
+    pairs, missing, extra = _match_messages(
+        source.messages,
+        destination.messages,
+    )
 
-    for message_index in range(max_messages):
-        path = f"{source.path}/message[{message_index}]"
-
-        if message_index >= len(source.messages):
-            add("message", path, "presence", None, "extra")
-            continue
-        if message_index >= len(destination.messages):
-            add("message", path, "presence", "present", None)
-            continue
-
-        expected = source.messages[message_index]
-        actual = destination.messages[message_index]
+    for expected, actual in pairs:
+        path = _message_path(source.path, expected)
 
         if expected.subject != actual.subject:
             add("message", path, "subject", expected.subject, actual.subject)
@@ -536,12 +588,7 @@ def _compare_messages(
                     actual_value,
                 )
 
-        _compare_named_properties(
-            expected,
-            actual,
-            path,
-            add,
-        )
+        _compare_named_properties(expected, actual, path, add)
 
         if expected.attachment_count != actual.attachment_count:
             add(
@@ -552,12 +599,122 @@ def _compare_messages(
                 actual.attachment_count,
             )
 
-        _compare_attachments(
-            expected,
-            actual,
-            path,
-            add,
+        _compare_attachments(expected, actual, path, add)
+
+    for expected in missing:
+        add(
+            "message",
+            _message_path(source.path, expected),
+            "presence",
+            "present",
+            None,
         )
+
+    for actual in extra:
+        add(
+            "message",
+            _message_path(destination.path, actual),
+            "presence",
+            None,
+            "extra",
+        )
+
+
+def _match_messages(
+    source: tuple[MessageFingerprint, ...],
+    destination: tuple[MessageFingerprint, ...],
+) -> tuple[
+    list[tuple[MessageFingerprint, MessageFingerprint]],
+    list[MessageFingerprint],
+    list[MessageFingerprint],
+]:
+    """Pair messages without assuming libpff preserves table row order."""
+
+    remaining_source = list(source)
+    remaining_destination = list(destination)
+    pairs: list[tuple[MessageFingerprint, MessageFingerprint]] = []
+
+    # First use Internet Message-ID when present. Duplicate IDs are handled
+    # as queues so repeated/copy messages remain deterministic.
+    by_id: dict[str, deque[MessageFingerprint]] = defaultdict(deque)
+    for item in remaining_destination:
+        if item.internet_message_id:
+            by_id[item.internet_message_id].append(item)
+
+    matched_destination_ids: set[int] = set()
+    unmatched_source: list[MessageFingerprint] = []
+    for expected in remaining_source:
+        if expected.internet_message_id and by_id[expected.internet_message_id]:
+            actual = by_id[expected.internet_message_id].popleft()
+            pairs.append((expected, actual))
+            matched_destination_ids.add(id(actual))
+        else:
+            unmatched_source.append(expected)
+
+    unmatched_destination = [
+        item
+        for item in remaining_destination
+        if id(item) not in matched_destination_ids
+    ]
+
+    # Then use a metadata key that remains meaningful for items without a
+    # Message-ID (calendar items, drafts, contacts, tasks, etc.).
+    by_metadata: dict[tuple[Any, ...], deque[MessageFingerprint]] = (
+        defaultdict(deque)
+    )
+    for item in unmatched_destination:
+        by_metadata[_message_fallback_key(item)].append(item)
+
+    matched_destination_ids.clear()
+    still_unmatched_source: list[MessageFingerprint] = []
+    for expected in unmatched_source:
+        queue = by_metadata[_message_fallback_key(expected)]
+        if queue:
+            actual = queue.popleft()
+            pairs.append((expected, actual))
+            matched_destination_ids.add(id(actual))
+        else:
+            still_unmatched_source.append(expected)
+
+    still_unmatched_destination = [
+        item
+        for item in unmatched_destination
+        if id(item) not in matched_destination_ids
+    ]
+
+    # Last-resort positional pairing preserves field-level diagnostics when
+    # the writer changed one of the identity fields.
+    fallback_pairs = min(
+        len(still_unmatched_source),
+        len(still_unmatched_destination),
+    )
+    for index in range(fallback_pairs):
+        pairs.append((
+            still_unmatched_source[index],
+            still_unmatched_destination[index],
+        ))
+
+    return (
+        pairs,
+        still_unmatched_source[fallback_pairs:],
+        still_unmatched_destination[fallback_pairs:],
+    )
+
+
+def _message_fallback_key(message: MessageFingerprint) -> tuple[Any, ...]:
+    return (
+        message.subject,
+        message.message_class,
+        message.delivery_time,
+        message.creation_time,
+        message.conversation_index_sha256,
+    )
+
+
+def _message_path(folder_path: str, message: MessageFingerprint) -> str:
+    if message.internet_message_id:
+        return f"{folder_path}/message[id={message.internet_message_id}]"
+    return f"{folder_path}/message[{message.index}]"
 
 
 def _compare_named_properties(

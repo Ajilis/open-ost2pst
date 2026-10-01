@@ -335,3 +335,154 @@ def test_named_property_value_change_is_detected() -> None:
     )
     assert count == 1
     assert truncated is False
+
+
+def test_folder_comparison_is_path_based_and_ignores_synthetic_deleted_items() -> None:
+    source = Mailbox(
+        Folder(
+            "Top of Personal Folders",
+            folders=[
+                Folder(
+                    "Root - Public",
+                    messages=[Message(subject="Public")],
+                ),
+                Folder(
+                    "Root - Mailbox",
+                    folders=[
+                        Folder(
+                            "IPM_SUBTREE",
+                            messages=[Message(subject="Inbox item")],
+                        )
+                    ],
+                ),
+            ],
+        )
+    )
+    destination = Mailbox(
+        Folder(
+            "Top of Personal Folders",
+            folders=[
+                Folder("Deleted Items"),
+                Folder(
+                    "Root - Public",
+                    messages=[Message(subject="Public")],
+                ),
+                Folder(
+                    "Root - Mailbox",
+                    folders=[
+                        Folder(
+                            "IPM_SUBTREE",
+                            messages=[Message(subject="Inbox item")],
+                        )
+                    ],
+                ),
+            ],
+        )
+    )
+
+    mismatches, count, truncated = compare_manifests(
+        build_manifest(source),
+        build_manifest(destination),
+    )
+
+    assert mismatches == ()
+    assert count == 0
+    assert truncated is False
+
+
+def test_extra_non_synthetic_folder_is_still_reported() -> None:
+    source = Mailbox(Folder("Root"))
+    destination = Mailbox(
+        Folder("Root", folders=[Folder("Unexpected")])
+    )
+
+    mismatches, count, truncated = compare_manifests(
+        build_manifest(source),
+        build_manifest(destination),
+    )
+
+    assert any(
+        item.kind == "folder"
+        and item.field == "presence"
+        and item.path == "/Root/Unexpected"
+        for item in mismatches
+    )
+    assert count == 2
+    assert truncated is False
+
+
+def test_message_comparison_uses_internet_message_id_before_position() -> None:
+    first = Message(
+        subject="First",
+        internet_message_id="<first@example.com>",
+        importance=1,
+    )
+    second = Message(
+        subject="Second",
+        internet_message_id="<second@example.com>",
+        importance=2,
+    )
+    source = Mailbox(Folder("Root", messages=[first, second]))
+    destination = Mailbox(
+        Folder(
+            "Root",
+            messages=[
+                Message(
+                    subject="Second",
+                    internet_message_id="<second@example.com>",
+                    importance=2,
+                ),
+                Message(
+                    subject="First",
+                    internet_message_id="<first@example.com>",
+                    importance=1,
+                ),
+            ],
+        )
+    )
+
+    mismatches, count, truncated = compare_manifests(
+        build_manifest(source),
+        build_manifest(destination),
+    )
+
+    assert mismatches == ()
+    assert count == 0
+    assert truncated is False
+
+
+def test_missing_message_is_reported_without_order_cascade() -> None:
+    source = Mailbox(
+        Folder(
+            "Root",
+            messages=[
+                Message(subject="One", internet_message_id="<1@example.com>"),
+                Message(subject="Two", internet_message_id="<2@example.com>"),
+                Message(subject="Three", internet_message_id="<3@example.com>"),
+            ],
+        )
+    )
+    destination = Mailbox(
+        Folder(
+            "Root",
+            messages=[
+                Message(subject="One", internet_message_id="<1@example.com>"),
+                Message(subject="Three", internet_message_id="<3@example.com>"),
+            ],
+        )
+    )
+
+    mismatches, count, truncated = compare_manifests(
+        build_manifest(source),
+        build_manifest(destination),
+    )
+
+    presence = [
+        item for item in mismatches
+        if item.kind == "message" and item.field == "presence"
+    ]
+    assert len(presence) == 1
+    assert "<2@example.com>" in presence[0].path
+    # global count + folder count + one stable message-presence mismatch
+    assert count == 3
+    assert truncated is False

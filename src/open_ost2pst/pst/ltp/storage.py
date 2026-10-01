@@ -11,10 +11,18 @@ from ..primitives import NidType, make_nid
 
 @dataclass(frozen=True, slots=True)
 class ExternalValue:
-    """One HNID-backed value stored as a local LTP subnode."""
+    """One HNID-backed value stored as a local LTP subnode.
+
+    block_payload_size and pad_nonfinal_to_max are used by Table Context
+    Row Matrices. MS-PST requires rows to remain wholly inside one data
+    block, and every non-final Row Matrix block to occupy a full 8192-byte
+    physical block.
+    """
 
     nid: int
     data: BinaryData
+    block_payload_size: int | None = None
+    pad_nonfinal_to_max: bool = False
 
 
 class LtpNidAllocator:
