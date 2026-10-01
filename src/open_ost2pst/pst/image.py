@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Iterator
+
+from open_ost2pst.binary_payload import iter_binary_chunks
 
 from .amap import AmapAllocator
 from .blocks import DataBlockImage, DataBlockStore
@@ -20,7 +22,7 @@ from .ltp.pc import PropertyContext
 from .ltp.storage import ExternalValue
 from .ltp.tc import TableContext
 from .ndb import Root, UnicodeHeader, VALID_AMAP
-from .primitives import BlockBidAllocator, PageBidAllocator
+from .primitives import BLOCK_MAX_PAYLOAD, BlockBidAllocator, PageBidAllocator
 from .subnodes import (
     SLBLOCK_MAX_ENTRIES,
     SubnodeEntry,
@@ -471,9 +473,52 @@ class NdbImageBuilder:
     ) -> dict[int, StoredNode]:
         result: dict[int, StoredNode] = {}
         for value in values:
-            tree = self.store_data_stream(value.data, c_ref=c_ref)
+            if value.block_payload_size is None:
+                tree = self.store_data_stream(value.data, c_ref=c_ref)
+            else:
+                tree = store_block_sequence(
+                    self._blocks,
+                    _iter_external_value_blocks(
+                        value.data,
+                        value.block_payload_size,
+                        pad_nonfinal_to_max=value.pad_nonfinal_to_max,
+                    ),
+                    c_ref=c_ref,
+                )
             result[value.nid] = StoredNode(data_bid=tree.root_bid)
         return result
+
+
+def _iter_external_value_blocks(
+    data,
+    block_payload_size: int,
+    *,
+    pad_nonfinal_to_max: bool,
+) -> Iterator[bytes]:
+    """Yield externally stored LTP data in format-aware NDB blocks.
+
+    Table Context Row Matrices need a row-aligned chunk size. When more than
+    one block is required, every non-final block is padded to the maximum
+    NDB payload so the following row starts at the next 8192-byte block.
+    """
+
+    if not 1 <= block_payload_size <= BLOCK_MAX_PAYLOAD:
+        raise ValueError("invalid external-value block payload size")
+
+    chunks = iter(iter_binary_chunks(data, block_payload_size))
+    try:
+        current = next(chunks)
+    except StopIteration:
+        return
+
+    for following in chunks:
+        raw = bytes(current)
+        if pad_nonfinal_to_max and len(raw) < BLOCK_MAX_PAYLOAD:
+            raw += b"\\x00" * (BLOCK_MAX_PAYLOAD - len(raw))
+        yield raw
+        current = following
+
+    yield bytes(current)
 
 
 def _write_stream_chunk(
