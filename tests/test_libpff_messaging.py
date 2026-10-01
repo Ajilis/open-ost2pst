@@ -52,3 +52,40 @@ def test_libpff_reads_generated_folder_and_message() -> None:
             )
         finally:
             store.close()
+
+
+@pytest.mark.parametrize("message_count", [447, 448, 1000, 5000])
+def test_libpff_reads_large_contents_table(message_count, tmp_path) -> None:
+    builder = MessagingBuilder(
+        store_name="Open OST2PST Store",
+        root_name="Top of Personal Folders",
+    )
+    inbox = builder.add_folder(builder.root, "Large Inbox")
+
+    for index in range(message_count):
+        builder.add_message(
+            inbox,
+            subject=f"Message {index:05d}",
+            body="x",
+            internet_message_id=f"<large-{index}@example.invalid>",
+        )
+
+    path = tmp_path / f"large-{message_count}.pst"
+    builder.write(path)
+
+    store = pypff.file()
+    store.open(str(path))
+    try:
+        root = get_ipm_subtree(store)
+        inbox_item = get_child_by_name(root, "Large Inbox")
+        assert inbox_item is not None
+        assert inbox_item.get_number_of_sub_messages() == message_count
+
+        first = inbox_item.get_sub_message(0)
+        last = inbox_item.get_sub_message(message_count - 1)
+        assert first is not None
+        assert last is not None
+        assert first.get_subject() == "Message 00000"
+        assert last.get_subject() == f"Message {message_count - 1:05d}"
+    finally:
+        store.close()
