@@ -55,12 +55,41 @@ def _normalized_output_name(value: str) -> str:
     return Path(name).name
 
 
+def _format_count(value: int) -> str:
+    """Format an integer with French-style thin grouping."""
+
+    return f"{int(value):,}".replace(",", " ")
+
+
+def _conversion_summary_rows(result: Any) -> tuple[tuple[str, int, int], ...]:
+    """Return source/destination counts shown after conversion."""
+
+    destination_manifest = result.verification.destination_manifest
+    return (
+        (
+            "Dossiers",
+            int(result.inspection.folders),
+            int(destination_manifest.folder_count),
+        ),
+        (
+            "Messages",
+            int(result.inspection.messages),
+            int(destination_manifest.message_count),
+        ),
+        (
+            "Pièces jointes",
+            int(result.inspection.attachments),
+            int(destination_manifest.attachment_count),
+        ),
+    )
+
+
 class OpenOst2PstApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title(f"{APP_NAME} {__version__}")
-        self.root.geometry("760x520")
-        self.root.minsize(680, 470)
+        self.root.geometry("800x650")
+        self.root.minsize(700, 560)
 
         self.source_var = tk.StringVar()
         self.destination_dir_var = tk.StringVar()
@@ -82,7 +111,7 @@ class OpenOst2PstApp:
         outer = ttk.Frame(self.root, padding=18)
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(1, weight=1)
-        outer.rowconfigure(8, weight=1)
+        outer.rowconfigure(9, weight=1)
 
         title = ttk.Label(
             outer,
@@ -227,9 +256,87 @@ class OpenOst2PstApp:
             pady=(2, 8),
         )
 
+        self.summary_frame = ttk.LabelFrame(
+            outer,
+            text="Récapitulatif final",
+            padding=8,
+        )
+        self.summary_frame.grid(
+            row=8,
+            column=0,
+            columnspan=3,
+            sticky="ew",
+            pady=(2, 10),
+        )
+        self.summary_frame.columnconfigure(0, weight=1)
+
+        headers = ("Élément", "Avant (OST)", "Après (PST)", "Écart")
+        for column, label in enumerate(headers):
+            ttk.Label(
+                self.summary_frame,
+                text=label,
+                font=("Segoe UI", 9, "bold"),
+                anchor="e" if column else "w",
+            ).grid(
+                row=0,
+                column=column,
+                sticky="ew",
+                padx=(0, 16) if column < 3 else 0,
+            )
+
+        self._summary_vars: dict[str, tuple[tk.StringVar, tk.StringVar, tk.StringVar]] = {}
+        for row, label in enumerate(
+            ("Dossiers", "Messages", "Pièces jointes"),
+            start=1,
+        ):
+            before_var = tk.StringVar(value="—")
+            after_var = tk.StringVar(value="—")
+            delta_var = tk.StringVar(value="—")
+            self._summary_vars[label] = (
+                before_var,
+                after_var,
+                delta_var,
+            )
+
+            ttk.Label(
+                self.summary_frame,
+                text=label,
+                anchor="w",
+            ).grid(row=row, column=0, sticky="ew")
+
+            for column, variable in enumerate(
+                (before_var, after_var, delta_var),
+                start=1,
+            ):
+                ttk.Label(
+                    self.summary_frame,
+                    textvariable=variable,
+                    anchor="e",
+                    width=14,
+                ).grid(
+                    row=row,
+                    column=column,
+                    sticky="e",
+                    padx=(0, 16) if column < 3 else 0,
+                )
+
+        self.summary_note_var = tk.StringVar(value="")
+        ttk.Label(
+            self.summary_frame,
+            textvariable=self.summary_note_var,
+            wraplength=720,
+        ).grid(
+            row=4,
+            column=0,
+            columnspan=4,
+            sticky="w",
+            pady=(6, 0),
+        )
+        self.summary_frame.grid_remove()
+
         log_frame = ttk.LabelFrame(outer, text="Journal", padding=6)
         log_frame.grid(
-            row=8,
+            row=9,
             column=0,
             columnspan=3,
             sticky="nsew",
@@ -256,7 +363,7 @@ class OpenOst2PstApp:
 
         buttons = ttk.Frame(outer)
         buttons.grid(
-            row=9,
+            row=10,
             column=0,
             columnspan=3,
             sticky="e",
@@ -419,6 +526,7 @@ class OpenOst2PstApp:
         self.percent_var.set("0 %")
         self.status_var.set("Démarrage…")
         self._clear_log()
+        self._hide_summary()
         self._append_log(f"Source      : {source}")
         self._append_log(f"Destination : {destination}")
         self._append_log(
@@ -483,12 +591,15 @@ class OpenOst2PstApp:
 
                 elif event == "success":
                     self._set_running(False)
-                    destination = payload.destination
+                    result = payload
+                    destination = result.destination
                     self.status_var.set("Conversion terminée et vérifiée")
                     self._append_log("Conversion terminée avec succès.")
+                    summary_text = self._show_summary(result)
                     messagebox.showinfo(
                         APP_NAME,
-                        "Conversion terminée.\n\n"
+                        "Conversion terminée et vérifiée.\n\n"
+                        f"{summary_text}\n\n"
                         f"PST : {destination}",
                     )
 
@@ -497,11 +608,14 @@ class OpenOst2PstApp:
                     exc: ConversionVerificationError = payload
                     self.status_var.set("PST créé, mais vérification échouée")
                     self._append_log(str(exc))
+                    summary_text = self._show_summary(exc.result)
                     messagebox.showwarning(
                         APP_NAME,
                         "Le PST a été créé, mais la vérification automatique "
                         f"a détecté {exc.result.verification.mismatch_count} "
-                        "écart(s). Consultez le rapport JSON.",
+                        "écart(s).\n\n"
+                        f"{summary_text}\n\n"
+                        "Consultez le rapport JSON.",
                     )
 
                 elif event == "error":
@@ -519,6 +633,69 @@ class OpenOst2PstApp:
             pass
         finally:
             self.root.after(100, self._pump_events)
+
+    def _show_summary(self, result: Any) -> str:
+        rows = _conversion_summary_rows(result)
+        log_lines = ["Récapitulatif final :"]
+        dialog_lines = []
+
+        for label, before, after in rows:
+            delta = after - before
+            before_text = _format_count(before)
+            after_text = _format_count(after)
+            delta_text = (
+                "0"
+                if delta == 0
+                else f"{delta:+,}".replace(",", " ")
+            )
+
+            before_var, after_var, delta_var = self._summary_vars[label]
+            before_var.set(before_text)
+            after_var.set(after_text)
+            delta_var.set(delta_text)
+
+            log_lines.append(
+                f"  {label:<16} {before_text:>10} -> {after_text:>10} "
+                f"(écart {delta_text})"
+            )
+            dialog_lines.append(
+                f"{label} : {before_text} → {after_text} "
+                f"(écart {delta_text})"
+            )
+
+        folder_before = rows[0][1]
+        folder_after = rows[0][2]
+        if (
+            result.verification.ok
+            and folder_after == folder_before + 1
+        ):
+            note = (
+                "Note : le PST contient un dossier système supplémentaire "
+                "créé par le format PST (Deleted Items)."
+            )
+        elif result.verification.ok:
+            note = "Les données vérifiées correspondent à la source."
+        else:
+            note = (
+                "La vérification a détecté des écarts ; consultez le rapport "
+                "JSON pour le détail."
+            )
+
+        self.summary_note_var.set(note)
+        self.summary_frame.grid()
+
+        for line in log_lines:
+            self._append_log(line)
+        self._append_log(note)
+
+        return "\n".join(dialog_lines)
+
+    def _hide_summary(self) -> None:
+        self.summary_frame.grid_remove()
+        self.summary_note_var.set("")
+        for variables in self._summary_vars.values():
+            for variable in variables:
+                variable.set("—")
 
     def _set_running(self, running: bool) -> None:
         self._running = running
