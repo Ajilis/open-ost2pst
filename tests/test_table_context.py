@@ -6,6 +6,7 @@ from open_ost2pst.pst.image import NdbImageBuilder
 from open_ost2pst.pst.ltp.bth import BthHeader, parse_leaf_records
 from open_ost2pst.pst.ltp.heap import HeapClientSignature
 from open_ost2pst.pst.ltp.pc import PropertyType
+from open_ost2pst.pst.primitives import BLOCK_MAX_PAYLOAD
 from open_ost2pst.pst.ltp.tc import (
     PID_LTP_ROW_ID,
     PID_LTP_ROW_VER,
