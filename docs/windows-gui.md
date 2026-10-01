@@ -13,6 +13,7 @@ The GUI provides:
 - optional JSON conversion report;
 - determinate progress bar from 0 to 100 percent;
 - live conversion stage and log;
+- persistent end-of-conversion recap with OST/PST folder, message, and attachment counts;
 - crash-resilient conversion-state checkpoint beside the destination;
 - interrupted-run detection and state-file archiving before restart;
 - automatic reopening and verification of the generated PST;
