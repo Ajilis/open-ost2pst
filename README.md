@@ -59,9 +59,23 @@ The OST reader expects the Python bindings for libpff to be installed separately
 ## Windows GUI
 
 A standalone Windows x64 GUI is built in CI as the artifact `OpenOST2PST-Windows-x64`.
-It lets users select the source OST/PST, choose a destination directory, set the
-PST filename, follow a real 0-100% progress bar, and optionally write a JSON
-conversion report. The generated PST is automatically reopened and verified.
+The selected source type determines the workflow:
+
+- **OST**: conversion to a new Unicode PST, followed by automatic reopen and verification.
+- **PST**: read-only report mode; no PST conversion or rewrite is performed.
+
+The first predefined PST report template is **RH — Activité hors horaires**.
+It scans sent-message timestamps only (without extracting bodies or attachment
+payloads), lets the user configure theoretical work hours, working weekdays and
+an optional date range, then writes an HTML report plus an auditable JSON
+sidecar. The report exposes eight descriptive KPIs: out-of-hours workdays,
+days exceeding the theoretical end by more than one/two hours, median/latest
+last activity, maximum consecutive overtime days, activity on rest days, and
+minimum apparent rest between active days.
+
+These indicators describe messaging traces observed in the PST; they do not
+measure actual working time and are not intended to make employment decisions
+on their own.
 
 Every conversion also maintains a small crash-resilient
 `*.conversion-state.json` checkpoint beside the destination. Progress is
