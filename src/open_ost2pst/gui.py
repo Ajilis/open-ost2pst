@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, time
 import json
 import os
 from pathlib import Path
@@ -22,6 +22,13 @@ from open_ost2pst.conversion import (
     ConversionProgress,
     ConversionVerificationError,
     convert_file,
+)
+from open_ost2pst.reports.rh_activity import (
+    REPORT_TEMPLATE_NAME,
+    RhActivityConfig,
+    generate_rh_activity_report,
+    scan_pst_sent_activity,
+    write_rh_activity_report,
 )
 
 
@@ -80,6 +87,78 @@ def _conversion_summary_rows(result: Any) -> tuple[tuple[str, int, int], ...]:
             "Pièces jointes",
             int(result.inspection.attachments),
             int(destination_manifest.attachment_count),
+        ),
+    )
+
+
+WEEKDAY_LABELS = (
+    "Lun",
+    "Mar",
+    "Mer",
+    "Jeu",
+    "Ven",
+    "Sam",
+    "Dim",
+)
+
+
+def _parse_hhmm(value: str) -> time:
+    try:
+        return datetime.strptime(value.strip(), "%H:%M").time()
+    except ValueError as exc:
+        raise ValueError(
+            f"heure invalide {value!r} ; format attendu HH:MM"
+        ) from exc
+
+
+def _parse_optional_date(value: str) -> date | None:
+    raw = value.strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"date invalide {value!r} ; format attendu AAAA-MM-JJ"
+        ) from exc
+
+
+def _format_duration_minutes(value: int | None) -> str:
+    if value is None:
+        return "—"
+    hours, minutes = divmod(max(0, int(value)), 60)
+    return f"{hours} h {minutes:02d}"
+
+
+def _report_kpi_lines(report: Any) -> tuple[str, ...]:
+    return (
+        (
+            "1. Jours avec activité hors horaires : "
+            f"{report.percent_workdays_out_of_hours:.2f} % "
+            f"({report.working_days_out_of_hours}/"
+            f"{report.scheduled_workdays})"
+        ),
+        f"2. Dépassement > 1 h : {report.days_overtime_gt_1h} jour(s)",
+        f"3. Dépassement > 2 h : {report.days_overtime_gt_2h} jour(s)",
+        (
+            "4. Heure médiane de dernière activité : "
+            f"{report.median_last_activity.strftime('%H:%M') if report.median_last_activity else '—'}"
+        ),
+        (
+            "5. Heure maximale de dernière activité : "
+            f"{report.latest_last_activity.strftime('%H:%M') if report.latest_last_activity else '—'}"
+        ),
+        (
+            "6. Série maximale de jours avec dépassement : "
+            f"{report.max_consecutive_overtime_days}"
+        ),
+        (
+            "7. Jours de repos / week-end avec activité : "
+            f"{report.rest_days_with_activity}"
+        ),
+        (
+            "8. Repos apparent minimal : "
+            f"{_format_duration_minutes(report.minimum_apparent_rest_minutes)}"
         ),
     )
 
