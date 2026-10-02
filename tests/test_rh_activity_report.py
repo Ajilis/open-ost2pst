@@ -220,3 +220,43 @@ def test_scan_rejects_non_pst_source(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="uniquement un fichier PST"):
         scan_pst_sent_activity(source)
+
+
+
+def test_scan_warns_when_no_sent_folder_is_found(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root = _FakeFolder(
+        "Root",
+        folders=[
+            _FakeFolder(
+                "Inbox",
+                messages=[
+                    _FakeMessage(
+                        "incoming",
+                        client_submit_time=datetime(2026, 9, 7, 12, 0),
+                    )
+                ],
+            )
+        ],
+    )
+    store = _FakeStore(root)
+    monkeypatch.setattr(
+        pff_reader,
+        "_load_pypff",
+        lambda: _FakePypff(store),
+    )
+    monkeypatch.setattr(
+        pff_reader,
+        "_select_logical_root",
+        lambda value: value,
+    )
+
+    source = tmp_path / "mailbox.pst"
+    source.write_bytes(b"fake")
+    scan = scan_pst_sent_activity(source)
+
+    assert scan.sent_folders_seen == 0
+    assert scan.events == []
+    assert any("Aucun dossier" in warning for warning in scan.warnings)
