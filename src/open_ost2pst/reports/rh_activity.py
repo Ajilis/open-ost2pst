@@ -257,6 +257,17 @@ def scan_pst_sent_activity(
         except Exception:
             pass
 
+    if scan.sent_folders_seen == 0:
+        scan.warnings.append(
+            "Aucun dossier d'éléments envoyés reconnu dans le PST. "
+            "Le rapport ne contient donc aucune activité envoyée."
+        )
+    elif scan.sent_messages_seen > 0 and not scan.events:
+        scan.warnings.append(
+            "Des messages envoyés ont été trouvés, mais aucun horodatage "
+            "exploitable n'a pu être lu."
+        )
+
     if progress_callback is not None:
         progress_callback(100, "Analyse PST terminée")
     return scan
@@ -761,9 +772,20 @@ Messages présents dans les dossiers envoyés : {report.scan.sent_messages_seen}
 Événements horodatés retenus : {len(report.scan.events)}<br>
 Messages envoyés sans date exploitable : {report.scan.undated_sent_messages}<br>
 Horodatages de repli utilisés : {report.scan.timestamp_fallbacks}</p>
+{_render_warnings(report.scan.warnings)}
 </body>
 </html>
 """
+
+
+def _render_warnings(warnings: list[str]) -> str:
+    if not warnings:
+        return ""
+    items = "".join(
+        f"<li>{escape(warning)}</li>"
+        for warning in warnings
+    )
+    return f"<h3>Avertissements</h3><ul>{items}</ul>"
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
